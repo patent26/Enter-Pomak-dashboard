@@ -146,9 +146,10 @@ async function buildDailyReport(date) {
     const netRevenue = completedOrders.reduce((s, o) => s + (o.order_price?.net_earnings || 0), 0);
     const kmDriven   = completedOrders.reduce((s, o) => s + (o.ride_distance || 0), 0) / 1000;
     const { onlineHours, drivingHours } = calcHoursFromLogs(stateLogs, uuid, dayStart.getTime(), dayEnd.getTime());
-    const netHourly  = onlineHours > 0 ? netRevenue / onlineHours : 0;
-    const acceptRate = calcAcceptRate(driverOrders);
-    const ridesCount = completedOrders.length;
+    const netHourly   = onlineHours > 0 ? netRevenue / onlineHours : 0;
+    const acceptRate  = calcAcceptRate(driverOrders);
+    const utilisation = onlineHours > 0 ? (drivingHours / onlineHours) * 100 : 0;
+    const ridesCount  = completedOrders.length;
 
     const MIN_HOURLY    = parseFloat(process.env.ALERT_MIN_NET_HOURLY   || 15);
     const MIN_REVENUE   = parseFloat(process.env.ALERT_MIN_NET_REVENUE  || 180);
@@ -176,6 +177,7 @@ async function buildDailyReport(date) {
       drivingHours: Math.round(drivingHours * 10)  / 10,
       kmDriven:     Math.round(kmDriven     * 10)  / 10,
       acceptRate:   Math.round(acceptRate   * 10)  / 10,
+      utilisation:  Math.round(utilisation  * 10)  / 10,
       ridesCount, assignedShiftName: null, shiftStatus: null,
       alerts, hasAlerts: alerts.length > 0,
     });
