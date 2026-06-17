@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: bolt-fleet-dashboard
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TZ
+        value: Europe/Zagreb
+      - key: BOLT_API_KEY
+        value: "rVkHL0wnxGujsZDh0BGnsDQZBy5jYR3FNerOd0-QLS9RUi-cqDAXJf4GtF0cy-zpg1SMV8pshjRgolWDHRjgcA"
+      - key: BOLT_FLEET_ID
+        value: "-VNLivCjT5tpemKP8aWVD"
+      - key: GMAIL_USER
+        value: "patricia.enterpomak@gmail.com"
+      - key: GMAIL_APP_PASSWORD
+        value: "htrvorgqgzwrjaml"
+      - key: REPORT_RECIPIENTS
+        value: "patricia.enterpomak@gmail.com,info.enterpomak@gmail.com,vidovic.perica84@gmail.com"
+      - key: DASHBOARD_PASSWORD
+        value: "Enter102030#"
+      - key: ALERT_MIN_NET_HOURLY
+        value: "15"
+      - key: ALERT_MIN_NET_REVENUE
+        value: "180"
+      - key: ALERT_MIN_KM
+        value: "150"
+      - key: ALERT_MAX_KM
+        value: "300"
+      - key: ALERT_MIN_ACCEPTANCE
+        value: "85"
+      - key: ALERT_MIN_DRIVING_HRS
+        value: "8"

@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bolt Fleet Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bolt-green:  #34D399;
+      --bolt-dark:   #1C1C2E;
+      --bolt-dark2:  #252540;
+      --surface:     #F0F2F5;
+      --card:        #FFFFFF;
+      --border:      #E5E7EB;
+      --text:        #111827;
+      --muted:       #6B7280;
+      --danger:      #DC2626;
+      --danger-bg:   #FEE2E2;
+      --warning:     #D97706;
+      --warning-bg:  #FEF3C7;
+      --success:     #059669;
+      --success-bg:  #D1FAE5;
+      --info:        #2563EB;
+      --info-bg:     #DBEAFE;
+    }
+
+    body {
+      background: var(--surface);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--bolt-dark);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 60px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      border-bottom: 1px solid #2D2D4E;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 17px;
+      font-weight: 800;
+      color: white;
+      white-space: nowrap;
+    }
+    .logo span { color: var(--bolt-green); }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .date-picker {
+      background: #2D2D4E;
+      border: 1px solid #3D3D5E;
+      color: white;
+      padding: 7px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      outline: none;
+    }
+    .date-picker:focus { border-color: var(--bolt-green); }
+
+    .btn {
+      padding: 7px 15px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+    .btn-primary { background: var(--bolt-green); color: #064E3B; }
+    .btn-primary:hover { background: #10B981; }
+    .btn-outline { background: transparent; color: #9CA3AF; border: 1px solid #3D3D5E; }
+    .btn-outline:hover { color: white; border-color: #6B7280; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Main ── */
+    main { padding: 20px 24px; max-width: 1500px; margin: 0 auto; }
+
+    /* ── Summary bar ── */
+    .summary-bar {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: var(--bolt-green);
+    }
+    .stat-card.alert-card::before { background: var(--danger); }
+
+    .stat-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+    .stat-value { font-size: 22px; font-weight: 800; color: var(--text); line-height: 1.1; }
+    .stat-sub   { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+    /* ── Controls ── */
+    .controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .fetch-time { font-size: 12px; color: var(--muted); }
+    .filter-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .filter-btn {
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      border: 1.5px solid transparent;
+      transition: all .15s;
+    }
+    .filter-btn.all    { color: var(--text); background: #E5E7EB; }
+    .filter-btn.all.active { background: var(--text); color: white; }
+    .filter-btn.f-alert { color: var(--danger); background: var(--danger-bg); }
+    .filter-btn.f-alert.active { border-color: var(--danger); }
+    .filter-btn.f-ok   { color: var(--success); background: var(--success-bg); }
+    .filter-btn.f-ok.active { border-color: var(--success); }
+
+    /* ── Driver cards ── */
+    .drivers-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      gap: 14px;
+    }
+
+    .driver-card {
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      transition: box-shadow .2s, border-color .2s;
+    }
+    .driver-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,.07); }
+    .driver-card.has-alerts { border-color: #FCD34D; }
+
+    .driver-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--border);
+      background: #FAFAFA;
+      gap: 10px;
+    }
+
+    .driver-name  { font-size: 15px; font-weight: 700; color: var(--text); }
+    .driver-phone { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+    /* Smjena badge */
+    .shift-badge {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .shift-completed { background: var(--success-bg); color: #065F46; }
+    .shift-missed    { background: var(--danger-bg);  color: #991B1B; }
+    .shift-active    { background: var(--info-bg);    color: #1E40AF; }
+    .shift-na        { background: #F3F4F6; color: var(--muted); }
+
+    /* ── Metrics grid ── */
+    .metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    .metric {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+    }
+    .metric:nth-child(3n) { border-right: none; }
+    /* bottom row — 6 items, last 3 have no bottom border */
+    .metric:nth-last-child(-n+3) { border-bottom: none; }
+
+    .metric-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 3px; }
+    .metric-value { font-size: 19px; font-weight: 800; line-height: 1.1; }
+    .metric-sub   { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+    .val-ok      { color: var(--text); }
+    .val-danger  { color: var(--danger); }
+    .val-warning { color: var(--warning); }
+    .val-success { color: var(--success); }
+
+    /* ── Alerts section ── */
+    .driver-alerts {
+      padding: 10px 16px;
+      background: #FFFBEB;
+      border-top: 1px solid #FDE68A;
+    }
+    .driver-alerts-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--warning);
+      text-transform: uppercase;
+      letter-spacing: .4px;
+      margin-bottom: 6px;
+    }
+    .alert-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border-radius: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      margin: 2px 3px 2px 0;
+    }
+    .ap-danger  { background: var(--danger-bg);  color: var(--danger); }
+    .ap-warning { background: var(--warning-bg); color: var(--warning); }
+    .ap-info    { background: var(--info-bg);    color: var(--info); }
+
+    .no-alerts {
+      padding: 10px 16px;
+      font-size: 12px;
+      color: var(--success);
+      font-weight: 700;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ── States ── */
+    .loading-state, .empty-state, .error-state {
+      text-align: center;
+      padding: 60px 24px;
+      color: var(--muted);
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--bolt-green);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      margin: 0 auto 14px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error-state .err-icon { font-size: 36px; margin-bottom: 10px; }
+    .error-state p { color: var(--danger); font-weight: 600; }
+    .error-state small { display: block; margin-top: 6px; font-family: monospace; font-size: 12px; color: var(--muted); }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed; bottom: 20px; right: 20px;
+      background: var(--bolt-dark); color: white;
+      padding: 11px 18px; border-radius: 10px;
+      font-size: 13px; font-weight: 600;
+      box-shadow: 0 8px 32px rgba(0,0,0,.18);
+      transform: translateY(80px); opacity: 0;
+      transition: all .25s; z-index: 999;
+      max-width: 300px;
+    }
+    #toast.show { transform: translateY(0); opacity: 1; }
+    #toast.success { border-left: 3px solid var(--bolt-green); }
+    #toast.error   { border-left: 3px solid var(--danger); }
+
+    /* ── Password overlay ── */
+    #pw-screen {
+      display: none;
+      position: fixed; inset: 0;
+      background: var(--bolt-dark);
+      z-index: 1000;
+      flex-direction: column; align-items: center; justify-content: center;
+      gap: 14px;
+    }
+    #pw-screen h2 { color: white; font-size: 20px; }
+    #pw-input {
+      padding: 11px 16px; border-radius: 8px;
+      border: 1.5px solid #3D3D5E; background: #252540;
+      color: white; font-size: 16px; outline: none;
+      width: 260px; text-align: center;
+    }
+    #pw-input:focus { border-color: var(--bolt-green); }
+    #pw-error { color: #FCA5A5; font-size: 12px; display: none; }
+
+    @media (max-width: 900px) {
+      .summary-bar { grid-template-columns: 1fr 1fr 1fr; }
+    }
+    @media (max-width: 600px) {
+      .summary-bar { grid-template-columns: 1fr 1fr; }
+      .drivers-grid { grid-template-columns: 1fr; }
+      main { padding: 12px 14px; }
+      .metrics { grid-template-columns: 1fr 1fr; }
+      .metric:nth-child(3n)          { border-right: 1px solid var(--border); }
+      .metric:nth-child(2n)          { border-right: none; }
+      .metric:nth-last-child(-n+3)   { border-bottom: 1px solid var(--border); }
+      .metric:nth-last-child(-n+2)   { border-bottom: none; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="pw-screen">
+  <div style="font-size:40px">⚡</div>
+  <h2>Bolt Fleet Dashboard</h2>
+  <input type="password" id="pw-input" placeholder="Lozinka..." />
+  <button class="btn btn-primary" onclick="submitPw()">Prijava</button>
+  <p id="pw-error">Pogrešna lozinka</p>
+</div>
+
+<header>
+  <div class="logo">⚡ Bolt <span>Fleet</span></div>
+  <div class="header-right">
+    <input type="date" class="date-picker" id="date-input" />
+    <button class="btn btn-outline" id="refresh-btn" onclick="loadReport(true)">↺ Osvježi</button>
+    <button class="btn btn-primary" id="mail-btn" onclick="sendReport()">📧 Pošalji mail</button>
+  </div>
+</header>
+
+<main>
+  <!-- Summary -->
+  <div class="summary-bar" id="summary-bar" style="display:none">
+    <div class="stat-card">
+      <div class="stat-label">Ukupni neto</div>
+      <div class="stat-value" id="sv-rev">—</div>
+      <div class="stat-sub"  id="ss-rev"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Prosj. neto/sat</div>
+      <div class="stat-value" id="sv-hrly">—</div>
+      <div class="stat-sub"  id="ss-hrly">prosjek flote</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Online sati</div>
+      <div class="stat-value" id="sv-online">—</div>
+      <div class="stat-sub"  id="ss-online">ukupno</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Sati u vožnji</div>
+      <div class="stat-value" id="sv-drive">—</div>
+      <div class="stat-sub"  id="ss-drive">ukupno</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Ukupno km</div>
+      <div class="stat-value" id="sv-km">—</div>
+      <div class="stat-sub"  id="ss-km"></div>
+    </div>
+    <div class="stat-card alert-card">
+      <div class="stat-label">Aktivni alarmi</div>
+      <div class="stat-value" id="sv-alerts" style="color:var(--danger)">—</div>
+      <div class="stat-sub"  id="ss-alerts"></div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls-row">
+    <div class="fetch-time" id="fetch-time"></div>
+    <div class="filter-row">
+      <button class="filter-btn all active" onclick="setFilter('all',this)">Svi vozači</button>
+      <button class="filter-btn f-alert"    onclick="setFilter('alerts',this)">⚠️ S alarmima</button>
+      <button class="filter-btn f-ok"       onclick="setFilter('ok',this)">✓ Bez alarma</button>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div id="loading" class="loading-state" style="display:none">
+    <div class="spinner"></div>
+    <p>Dohvaćam podatke...</p>
+  </div>
+  <div class="drivers-grid" id="drivers-grid"></div>
+  <div id="empty-state"  class="empty-state"  style="display:none"><p style="font-size:32px">📭</p><p style="margin-top:8px;">Nema podataka za odabrani datum.</p></div>
+  <div id="error-state"  class="error-state"  style="display:none">
+    <div class="err-icon">⚠️</div>
+    <p id="error-msg">Greška pri dohvaćanju podataka.</p>
+    <small id="error-detail"></small>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+  let currentFilter = 'all';
+  let allDrivers    = [];
+  const storedKey   = localStorage.getItem('fleet_key') || '';
+
+  // ── Helpers ───────────────────────────────────────────────────
+  function eur(val) {
+    if (val == null || isNaN(val)) return '—';
+    return new Intl.NumberFormat('hr-HR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 }).format(val);
+  }
+  function pct(val) { return (val == null || isNaN(val)) ? '—' : val.toFixed(1) + '%'; }
+  function km(val)  { return (val == null || isNaN(val)) ? '—' : val.toFixed(0) + ' km'; }
+  function hrs(val) {
+    if (val == null || isNaN(val) || val === 0) return '0h';
+    const h = Math.floor(val), m = Math.round((val - h) * 60);
+    return m > 0 ? `${h}h ${m}min` : `${h}h`;
+  }
+
+  // ── Init ──────────────────────────────────────────────────────
+  function init() {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    document.getElementById('date-input').value = yesterday.toISOString().split('T')[0];
+    document.getElementById('date-input').addEventListener('change', () => loadReport(false));
+    loadReport(false);
+  }
+
+  // ── Password ──────────────────────────────────────────────────
+  function submitPw() {
+    const val = document.getElementById('pw-input').value;
+    localStorage.setItem('fleet_key', val);
+    location.reload();
+  }
+  document.getElementById('pw-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitPw();
+  });
+
+  // ── Load ──────────────────────────────────────────────────────
+  async function loadReport(force = false) {
+    const date = document.getElementById('date-input').value;
+    if (!date) return;
+
+    showLoading(true);
+    hideError();
+    document.getElementById('summary-bar').style.display = 'none';
+    setBtn(true);
+
+    try {
+      const url = `/api/report?date=${date}${force ? '&bust=' + Date.now() : ''}`;
+      const headers = storedKey ? { 'x-dashboard-key': storedKey } : {};
+      const res = await fetch(url, { headers });
+
+      if (res.status === 401) {
+        document.getElementById('pw-screen').style.display = 'flex';
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error || 'Server greška');
+      }
+
+      const json = await res.json();
+      allDrivers = json.data || [];
+
+      renderSummary(allDrivers);
+      renderDrivers(allDrivers);
+
+      const when = new Date(json.fetchedAt).toLocaleTimeString('hr-HR');
+      document.getElementById('fetch-time').textContent =
+        `${json.cached ? '📦 Cache' : '🔄 Svježe'} · ${when}`;
+
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      showLoading(false);
+      setBtn(false);
+    }
+  }
+
+  function setBtn(loading) {
+    document.getElementById('refresh-btn').disabled = loading;
+    document.getElementById('refresh-btn').textContent = loading ? '...' : '↺ Osvježi';
+  }
+
+  // ── Summary ───────────────────────────────────────────────────
+  function renderSummary(drivers) {
+    const active = drivers.filter(d => !d.error && (d.onlineHours > 0 || d.ridesCount > 0));
+    if (!active.length) return;
+
+    const totalRev    = active.reduce((s,d) => s + (d.netRevenue   || 0), 0);
+    const avgHourly   = active.reduce((s,d) => s + (d.netHourly    || 0), 0) / active.length;
+    const totalOnline = active.reduce((s,d) => s + (d.onlineHours  || 0), 0);
+    const totalDrive  = active.reduce((s,d) => s + (d.drivingHours || 0), 0);
+    const totalKm     = active.reduce((s,d) => s + (d.kmDriven     || 0), 0);
+    const totalAlerts = drivers.reduce((s,d) => s + (d.alerts?.length || 0), 0);
+
+    document.getElementById('sv-rev').textContent    = eur(totalRev);
+    document.getElementById('ss-rev').textContent    = `${active.length} aktivnih vozača`;
+    document.getElementById('sv-hrly').textContent   = eur(avgHourly) + '/h';
+    document.getElementById('sv-online').textContent = hrs(totalOnline);
+    document.getElementById('sv-drive').textContent  = hrs(totalDrive);
+    document.getElementById('sv-km').textContent     = km(totalKm);
+    document.getElementById('ss-km').textContent     = `prosj. ${km(totalKm / active.length)}/vozač`;
+    document.getElementById('sv-alerts').textContent = totalAlerts;
+    document.getElementById('ss-alerts').textContent = `${drivers.filter(d=>d.hasAlerts).length} vozača`;
+
+    document.getElementById('summary-bar').style.display = 'grid';
+  }
+
+  // ── Driver cards ──────────────────────────────────────────────
+  function renderDrivers(drivers) {
+    const grid = document.getElementById('drivers-grid');
+    grid.innerHTML = '';
+
+    const filtered = currentFilter === 'alerts' ? drivers.filter(d => d.hasAlerts)
+                   : currentFilter === 'ok'     ? drivers.filter(d => !d.hasAlerts && !d.error)
+                   : drivers;
+
+    document.getElementById('empty-state').style.display = filtered.length ? 'none' : 'block';
+    if (!filtered.length) return;
+
+    filtered.forEach(d => grid.insertAdjacentHTML('beforeend', cardHTML(d)));
+  }
+
+  function shiftBadge(d) {
+    const name = d.assignedShiftName;
+    const st   = d.shiftStatus;
+    if (!name) return '<span class="shift-badge shift-na">—</span>';
+    if (st === 'completed') return `<span class="shift-badge shift-completed">✓ ${name}</span>`;
+    if (st === 'missed')    return `<span class="shift-badge shift-missed">✗ ${name}</span>`;
+    if (st === 'active')    return `<span class="shift-badge shift-active">▶ ${name}</span>`;
+    return `<span class="shift-badge shift-na">${name}</span>`;
+  }
+
+  function metricHTML(label, value, cssClass, sub = '') {
+    return `
+      <div class="metric">
+        <div class="metric-label">${label}</div>
+        <div class="metric-value ${cssClass}">${value}</div>
+        ${sub ? `<div class="metric-sub">${sub}</div>` : '<div class="metric-sub">&nbsp;</div>'}
+      </div>`;
+  }
+
+  function cardHTML(d) {
+    if (d.error) return `
+      <div class="driver-card">
+        <div class="driver-header">
+          <div><div class="driver-name">${d.name}</div><div class="driver-phone">Greška pri dohvaćanju</div></div>
+        </div>
+        <div class="no-alerts" style="color:var(--muted);">⚠️ Podaci nisu dostupni za ovaj datum.</div>
+      </div>`;
+
+    const codes = new Set((d.alerts||[]).map(a => a.code));
+
+    const revClass   = codes.has('low_revenue')   ? 'val-warning' : 'val-ok';
+    const hrlyClass  = codes.has('low_hourly')    ? 'val-danger'  : d.netHourly >= 18 ? 'val-success' : 'val-ok';
+    const onlineClass= 'val-ok';
+    const driveClass = codes.has('low_drive_hrs') ? 'val-warning' : d.drivingHours >= 8 ? 'val-success' : 'val-ok';
+    const kmClass    = codes.has('low_km') || codes.has('high_km') ? 'val-warning' : 'val-ok';
+    const accClass   = codes.has('low_accept')    ? 'val-danger'  : d.acceptRate >= 90 ? 'val-success' : 'val-ok';
+
+    const alertsHTML = d.alerts && d.alerts.length
+      ? `<div class="driver-alerts">
+           <div class="driver-alerts-label">⚠️ Alarmi</div>
+           ${d.alerts.map(a => `<span class="alert-pill ap-${a.type}">${a.msg}</span>`).join('')}
+         </div>`
+      : `<div class="no-alerts">✓ Sve u redu</div>`;
+
+    return `
+      <div class="driver-card ${d.hasAlerts ? 'has-alerts' : ''}">
+        <div class="driver-header">
+          <div>
+            <div class="driver-name">${d.name}</div>
+            <div class="driver-phone">${d.phone} · ${d.ridesCount} vožnji</div>
+          </div>
+          ${shiftBadge(d)}
+        </div>
+        <div class="metrics">
+          ${metricHTML('Neto promet',    eur(d.netRevenue),   revClass,   '')}
+          ${metricHTML('Neto / sat',     eur(d.netHourly)+'/h', hrlyClass, '')}
+          ${metricHTML('Prihvaćenost',   pct(d.acceptRate),   accClass,   '')}
+          ${metricHTML('Online sati',    hrs(d.onlineHours),  onlineClass, 'ukupno online')}
+          ${metricHTML('Sati u vožnji',  hrs(d.drivingHours), driveClass,  'stvarna vožnja')}
+          ${metricHTML('Kilometraža',    km(d.kmDriven),      kmClass,    '')}
+        </div>
+        ${alertsHTML}
+      </div>`;
+  }
+
+  // ── Filter ────────────────────────────────────────────────────
+  function setFilter(f, btn) {
+    currentFilter = f;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderDrivers(allDrivers);
+  }
+
+  // ── Send mail ─────────────────────────────────────────────────
+  async function sendReport() {
+    const date = document.getElementById('date-input').value;
+    document.getElementById('mail-btn').disabled = true;
+    document.getElementById('mail-btn').textContent = '⏳ Šalje...';
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (storedKey) headers['x-dashboard-key'] = storedKey;
+      const res  = await fetch('/api/send-report', { method: 'POST', headers, body: JSON.stringify({ date }) });
+      const json = await res.json();
+      if (json.ok) showToast('✅ Izvještaj poslan na sve mailove!', 'success');
+      else         showToast('❌ Greška: ' + json.error, 'error');
+    } catch (err) {
+      showToast('❌ Greška pri slanju', 'error');
+    } finally {
+      document.getElementById('mail-btn').disabled = false;
+      document.getElementById('mail-btn').textContent = '📧 Pošalji mail';
+    }
+  }
+
+  // ── UI helpers ────────────────────────────────────────────────
+  function showLoading(show) {
+    document.getElementById('loading').style.display = show ? 'block' : 'none';
+    document.getElementById('drivers-grid').style.display = show ? 'none' : 'grid';
+  }
+  function showError(msg) {
+    document.getElementById('error-state').style.display = 'block';
+    document.getElementById('error-msg').textContent = msg;
+    document.getElementById('drivers-grid').style.display = 'none';
+  }
+  function hideError() {
+    document.getElementById('error-state').style.display = 'none';
+  }
+  function showToast(msg, type = 'success') {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'show ' + type;
+    setTimeout(() => { t.className = ''; }, 3500);
+  }
+
+  init();
+</script>
+</body>
+</html>
