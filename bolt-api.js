@@ -34,7 +34,7 @@ async function apiPost(endpoint, body = {}) {
       timeout: 20000,
     });
     console.log(`🟢 ${endpoint} odgovor kod:`, res.data.code);
-    if (res.data.code !== 0) throw new Error(`Bolt greška ${res.data.code}: ${res.data.message}`);
+    if (res.data.code !== 0) throw new Error(`Bolt API greška ${res.data.code}: ${res.data.message}`);
     return res.data.data;
   } catch (err) {
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
@@ -45,7 +45,9 @@ async function apiPost(endpoint, body = {}) {
 
 async function getDrivers() {
   const data = await apiPost('/fleetIntegration/v1/getDrivers', {
-    company_id: COMPANY_ID, limit: 1000, offset: 0, portal_status: 'active',
+    company_id: COMPANY_ID,
+    limit: 1000,
+    offset: 0,
   });
   return data.drivers || [];
 }
