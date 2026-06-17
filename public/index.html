@@ -354,17 +354,17 @@
     <div class="stat-card">
       <div class="stat-label">Prosj. neto/sat</div>
       <div class="stat-value" id="sv-hrly">—</div>
-      <div class="stat-sub"  id="ss-hrly">prosjek flote</div>
+      <div class="stat-sub"  id="ss-hrly">vozači 8h+ vožnje</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Online sati</div>
-      <div class="stat-value" id="sv-online">—</div>
-      <div class="stat-sub"  id="ss-online">ukupno</div>
+      <div class="stat-label">Prosj. utilisation</div>
+      <div class="stat-value" id="sv-util">—</div>
+      <div class="stat-sub"  id="ss-util">vozači 8h+ vožnje</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Sati u vožnji</div>
-      <div class="stat-value" id="sv-drive">—</div>
-      <div class="stat-sub"  id="ss-drive">ukupno</div>
+      <div class="stat-label">Prosj. prihvaćenost</div>
+      <div class="stat-value" id="sv-accept">—</div>
+      <div class="stat-sub"  id="ss-accept">vozači 8h+ vožnje</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Ukupno km</div>
@@ -490,25 +490,33 @@
 
   // ── Summary ───────────────────────────────────────────────────
   function renderSummary(drivers) {
-    const active = drivers.filter(d => !d.error && (d.onlineHours > 0 || d.ridesCount > 0));
+    const active   = drivers.filter(d => !d.error && (d.onlineHours > 0 || d.ridesCount > 0));
+    // Prosjeci samo za vozače s 8+ sati u vožnji
+    const active8h = active.filter(d => (d.drivingHours || 0) >= 8);
+    const base     = active8h.length > 0 ? active8h : active; // fallback na sve ako nema 8h+
     if (!active.length) return;
 
-    const totalRev    = active.reduce((s,d) => s + (d.netRevenue   || 0), 0);
-    const avgHourly   = active.reduce((s,d) => s + (d.netHourly    || 0), 0) / active.length;
-    const totalOnline = active.reduce((s,d) => s + (d.onlineHours  || 0), 0);
-    const totalDrive  = active.reduce((s,d) => s + (d.drivingHours || 0), 0);
-    const totalKm     = active.reduce((s,d) => s + (d.kmDriven     || 0), 0);
+    const totalRev   = active.reduce((s,d) => s + (d.netRevenue || 0), 0);
+    const avgHourly  = base.length ? base.reduce((s,d) => s + (d.netHourly    || 0), 0) / base.length : 0;
+    const avgUtil    = base.length ? base.reduce((s,d) => s + (d.utilisation  || 0), 0) / base.length : 0;
+    const avgAccept  = base.length ? base.reduce((s,d) => s + (d.acceptRate   || 0), 0) / base.length : 0;
+    const totalKm    = active.reduce((s,d) => s + (d.kmDriven || 0), 0);
     const totalAlerts = drivers.reduce((s,d) => s + (d.alerts?.length || 0), 0);
 
     document.getElementById('sv-rev').textContent    = eur(totalRev);
     document.getElementById('ss-rev').textContent    = `${active.length} aktivnih vozača`;
     document.getElementById('sv-hrly').textContent   = eur(avgHourly) + '/h';
-    document.getElementById('sv-online').textContent = hrs(totalOnline);
-    document.getElementById('sv-drive').textContent  = hrs(totalDrive);
+    document.getElementById('sv-util').textContent   = pct(avgUtil);
+    document.getElementById('sv-accept').textContent = pct(avgAccept);
     document.getElementById('sv-km').textContent     = km(totalKm);
     document.getElementById('ss-km').textContent     = `prosj. ${km(totalKm / active.length)}/vozač`;
     document.getElementById('sv-alerts').textContent = totalAlerts;
     document.getElementById('ss-alerts').textContent = `${drivers.filter(d=>d.hasAlerts).length} vozača`;
+    if (base.length < active.length) {
+      document.getElementById('ss-util').textContent   = `${base.length} vozača 8h+`;
+      document.getElementById('ss-accept').textContent = `${base.length} vozača 8h+`;
+      document.getElementById('ss-hrly').textContent   = `${base.length} vozača 8h+`;
+    }
 
     document.getElementById('summary-bar').style.display = 'grid';
   }
@@ -582,12 +590,14 @@
           ${shiftBadge(d)}
         </div>
         <div class="metrics">
-          ${metricHTML('Neto promet',    eur(d.netRevenue),   revClass,   '')}
-          ${metricHTML('Neto / sat',     eur(d.netHourly)+'/h', hrlyClass, '')}
-          ${metricHTML('Prihvaćenost',   pct(d.acceptRate),   accClass,   '')}
-          ${metricHTML('Online sati',    hrs(d.onlineHours),  onlineClass, 'ukupno online')}
-          ${metricHTML('Sati u vožnji',  hrs(d.drivingHours), driveClass,  'stvarna vožnja')}
-          ${metricHTML('Kilometraža',    km(d.kmDriven),      kmClass,    '')}
+          ${metricHTML('Neto promet',   eur(d.netRevenue),    revClass,   '')}
+          ${metricHTML('Neto / sat',    eur(d.netHourly)+'/h', hrlyClass, '')}
+          ${metricHTML('Prihvaćenost', pct(d.acceptRate),    accClass,   'acceptance rate')}
+          ${metricHTML('Online sati',   hrs(d.onlineHours),   onlineClass, 'ukupno online')}
+          ${metricHTML('Sati u vožnji', hrs(d.drivingHours),  driveClass,  'stvarna vožnja')}
+          ${metricHTML('Kilometraža',   km(d.kmDriven),       kmClass,    '')}
+          ${metricHTML('Utilisation',   pct(d.utilisation),   d.utilisation < 50 ? 'val-warning' : 'val-ok', 'vožnja/online')}
+          ${metricHTML('Br. vožnji',    String(d.ridesCount), 'val-ok',   '')}
         </div>
         ${alertsHTML}
       </div>`;
