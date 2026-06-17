@@ -3,16 +3,16 @@ services:
     name: bolt-fleet-dashboard
     runtime: node
     buildCommand: npm install
-    startCommand: npm start
+    startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: TZ
         value: Europe/Zagreb
       - key: BOLT_API_KEY
-        value: "rVkHL0wnxGujsZDh0BGnsDQZBy5jYR3FNerOd0-QLS9RUi-cqDAXJf4GtF0cy-zpg1SMV8pshjRgolWDHRjgcA"
-      - key: BOLT_FLEET_ID
         value: "-VNLivCjT5tpemKP8aWVD"
+      - key: BOLT_CLIENT_SECRET
+        value: "rVkHL0wnxGujsZDh0BGnsDQZBy5jYR3FNerOd0-QLS9RUi-cqDAXJf4GtF0cy-zpg1SMV8pshjRgolWDHRjgcA"
       - key: GMAIL_USER
         value: "patricia.enterpomak@gmail.com"
       - key: GMAIL_APP_PASSWORD
