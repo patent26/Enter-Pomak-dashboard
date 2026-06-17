@@ -46,6 +46,7 @@ async function apiPost(endpoint, body = {}) {
 async function getDrivers() {
   const data = await apiPost('/fleetIntegration/v1/getDrivers', {
     company_id: COMPANY_ID,
+    company_ids: [COMPANY_ID],
     limit: 1000,
     offset: 0,
   });
@@ -58,6 +59,7 @@ async function getOrders(startTs, endTs) {
   while (true) {
     const data = await apiPost('/fleetIntegration/v1/getFleetOrders', {
       company_id: COMPANY_ID,
+      company_ids: [COMPANY_ID],
       start_ts: startTs,
       end_ts: endTs,
       limit: 1000,
@@ -77,6 +79,7 @@ async function getStateLogs(startTs, endTs) {
   while (true) {
     const data = await apiPost('/fleetIntegration/v1/getFleetStateLogs', {
       company_id: COMPANY_ID,
+      company_ids: [COMPANY_ID],
       start_ts: startTs,
       end_ts: endTs,
       limit: 1000,
