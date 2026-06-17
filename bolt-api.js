@@ -43,11 +43,9 @@ async function apiPost(endpoint, body = {}) {
   }
 }
 
-async function getDrivers(startTs, endTs) {
+async function getDrivers() {
   const data = await apiPost('/fleetIntegration/v1/getDrivers', {
     company_ids: [COMPANY_ID],
-    start_ts: startTs,
-    end_ts: endTs,
     limit: 1000,
     offset: 0,
   });
@@ -125,7 +123,7 @@ async function buildDailyReport(date) {
   console.log(`📊 Dohvaćam podatke za ${date} (${startTs} - ${endTs})`);
 
   const [drivers, orders, stateLogs] = await Promise.all([
-    getDrivers(startTs, endTs),
+    getDrivers(),
     getOrders(startTs, endTs),
     getStateLogs(startTs, endTs),
   ]);
