@@ -43,10 +43,11 @@ async function apiPost(endpoint, body = {}) {
   }
 }
 
-async function getDrivers() {
+async function getDrivers(startTs, endTs) {
   const data = await apiPost('/fleetIntegration/v1/getDrivers', {
-    company_id: COMPANY_ID,
     company_ids: [COMPANY_ID],
+    start_ts: startTs,
+    end_ts: endTs,
     limit: 1000,
     offset: 0,
   });
@@ -58,7 +59,6 @@ async function getOrders(startTs, endTs) {
   let offset = 0;
   while (true) {
     const data = await apiPost('/fleetIntegration/v1/getFleetOrders', {
-      company_id: COMPANY_ID,
       company_ids: [COMPANY_ID],
       start_ts: startTs,
       end_ts: endTs,
@@ -78,7 +78,6 @@ async function getStateLogs(startTs, endTs) {
   let offset = 0;
   while (true) {
     const data = await apiPost('/fleetIntegration/v1/getFleetStateLogs', {
-      company_id: COMPANY_ID,
       company_ids: [COMPANY_ID],
       start_ts: startTs,
       end_ts: endTs,
@@ -125,14 +124,12 @@ async function buildDailyReport(date) {
 
   console.log(`📊 Dohvaćam podatke za ${date} (${startTs} - ${endTs})`);
 
-  const drivers = await getDrivers();
-  console.log(`👥 ${drivers.length} vozača`);
-
-  const [orders, stateLogs] = await Promise.all([
+  const [drivers, orders, stateLogs] = await Promise.all([
+    getDrivers(startTs, endTs),
     getOrders(startTs, endTs),
     getStateLogs(startTs, endTs),
   ]);
-  console.log(`🚗 ${orders.length} narudžbi, 📋 ${stateLogs.length} logova`);
+  console.log(`👥 ${drivers.length} vozača, 🚗 ${orders.length} narudžbi, 📋 ${stateLogs.length} logova`);
 
   const results = [];
   for (const driver of drivers) {
