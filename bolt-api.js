@@ -1,8 +1,8 @@
 // bolt-api.js — Bolt Fleet API klijent (Fleet Integration Gateway)
 const axios = require('axios');
 
-const OIDC_URL = 'https://oidc.bolt.eu/token';
-const API_URL  = 'https://node.bolt.eu/fleet-integration-gateway';
+const OIDC_URL   = 'https://oidc.bolt.eu/token';
+const API_URL    = 'https://node.bolt.eu/fleet-integration-gateway';
 const COMPANY_ID = 318363;
 
 let tokenCache = { token: null, expiresAt: 0 };
@@ -21,7 +21,7 @@ async function getToken() {
   });
   tokenCache.token     = res.data.access_token;
   tokenCache.expiresAt = now + (res.data.expires_in || 600) * 1000;
-  console.log('✅ OAuth2 token dohvaćen, vrijedi', res.data.expires_in, 's');
+  console.log('✅ OAuth2 token dohvaćen');
   return tokenCache.token;
 }
 
@@ -33,12 +33,12 @@ async function apiPost(endpoint, body = {}) {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       timeout: 20000,
     });
-    console.log(`🟢 ${endpoint} odgovor kod:`, res.data.code);
-    if (res.data.code !== 0) throw new Error(`Bolt API greška ${res.data.code}: ${res.data.message}`);
+    console.log(`🟢 ${endpoint} kod: ${res.data.code} msg: ${res.data.message}`);
+    if (res.data.code !== 0) throw new Error(`Bolt greška ${res.data.code}: ${res.data.message}`);
     return res.data.data;
   } catch (err) {
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error(`🔴 ${endpoint} greška [${err.response?.status}]:`, detail);
+    console.error(`🔴 ${endpoint} [${err.response?.status}]: ${detail}`);
     throw new Error(detail);
   }
 }
@@ -57,8 +57,11 @@ async function getOrders(startTs, endTs) {
   let offset = 0;
   while (true) {
     const data = await apiPost('/fleetIntegration/v1/getFleetOrders', {
-      company_id: COMPANY_ID, start_ts: startTs, end_ts: endTs,
-      time_range_filter_type: 'price_review', limit: 1000, offset,
+      company_id: COMPANY_ID,
+      start_ts: startTs,
+      end_ts: endTs,
+      limit: 1000,
+      offset,
     });
     const batch = data.orders || [];
     orders.push(...batch);
@@ -73,7 +76,11 @@ async function getStateLogs(startTs, endTs) {
   let offset = 0;
   while (true) {
     const data = await apiPost('/fleetIntegration/v1/getFleetStateLogs', {
-      company_id: COMPANY_ID, start_ts: startTs, end_ts: endTs, limit: 1000, offset,
+      company_id: COMPANY_ID,
+      start_ts: startTs,
+      end_ts: endTs,
+      limit: 1000,
+      offset,
     });
     const batch = data.state_logs || [];
     logs.push(...batch);
@@ -101,7 +108,9 @@ function calcHoursFromLogs(logs, driverUuid, startMs, endMs) {
 
 function calcAcceptRate(driverOrders) {
   if (!driverOrders.length) return 0;
-  const cancelled = driverOrders.filter(o => o.order_status === 'driver_cancelled' || o.driver_cancelled_reason).length;
+  const cancelled = driverOrders.filter(o =>
+    o.order_status === 'driver_cancelled' || o.driver_cancelled_reason
+  ).length;
   return ((driverOrders.length - cancelled) / driverOrders.length) * 100;
 }
 
@@ -112,17 +121,24 @@ async function buildDailyReport(date) {
   const endTs    = Math.floor(dayEnd.getTime()   / 1000);
 
   console.log(`📊 Dohvaćam podatke za ${date} (${startTs} - ${endTs})`);
-  const [drivers, orders, stateLogs] = await Promise.all([
-    getDrivers(), getOrders(startTs, endTs), getStateLogs(startTs, endTs),
+
+  const drivers = await getDrivers();
+  console.log(`👥 ${drivers.length} vozača`);
+
+  const [orders, stateLogs] = await Promise.all([
+    getOrders(startTs, endTs),
+    getStateLogs(startTs, endTs),
   ]);
-  console.log(`👥 ${drivers.length} vozača, 🚗 ${orders.length} narudžbi, 📋 ${stateLogs.length} logova`);
+  console.log(`🚗 ${orders.length} narudžbi, 📋 ${stateLogs.length} logova`);
 
   const results = [];
   for (const driver of drivers) {
     const uuid = driver.driver_uuid;
     const name = `${driver.first_name} ${driver.last_name}`.trim();
     const driverOrders    = orders.filter(o => o.driver_uuid === uuid);
-    const completedOrders = driverOrders.filter(o => o.order_status === 'finished' || o.order_drop_off_timestamp > 0);
+    const completedOrders = driverOrders.filter(o =>
+      o.order_status === 'finished' || o.order_drop_off_timestamp > 0
+    );
     const hasLogs = stateLogs.some(l => l.driver_uuid === uuid);
     if (!completedOrders.length && !driverOrders.length && !hasLogs) continue;
 
