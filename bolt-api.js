@@ -33,12 +33,12 @@ async function apiPost(endpoint, body = {}) {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       timeout: 20000,
     });
-    console.log(`🟢 ${endpoint} kod: ${res.data.code} msg: ${res.data.message}`);
+    console.log(`🟢 ${endpoint} kod: ${res.data.code}`);
     if (res.data.code !== 0) throw new Error(`Bolt greška ${res.data.code}: ${res.data.message}`);
     return res.data.data;
   } catch (err) {
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error(`🔴 ${endpoint} [${err.response?.status}]: ${detail}`);
+    console.error(`🔴 ${endpoint}: ${detail}`);
     throw new Error(detail);
   }
 }
@@ -78,7 +78,7 @@ async function getStateLogs(startTs, endTs) {
   let offset = 0;
   while (true) {
     const data = await apiPost('/fleetIntegration/v1/getFleetStateLogs', {
-      company_ids: [COMPANY_ID],
+      company_id: COMPANY_ID,
       start_ts: startTs,
       end_ts: endTs,
       limit: 1000,
