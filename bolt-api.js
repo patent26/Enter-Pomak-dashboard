@@ -21,18 +21,26 @@ async function getToken() {
   });
   tokenCache.token     = res.data.access_token;
   tokenCache.expiresAt = now + (res.data.expires_in || 600) * 1000;
-  console.log('✅ OAuth2 token dohvaćen');
+  console.log('✅ OAuth2 token dohvaćen, vrijedi', res.data.expires_in, 's');
   return tokenCache.token;
 }
 
 async function apiPost(endpoint, body = {}) {
   const token = await getToken();
-  const res = await axios.post(`${API_URL}${endpoint}`, body, {
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    timeout: 20000,
-  });
-  if (res.data.code !== 0) throw new Error(`Bolt API greška ${res.data.code}: ${res.data.message}`);
-  return res.data.data;
+  console.log(`🔵 POST ${endpoint}`, JSON.stringify(body));
+  try {
+    const res = await axios.post(`${API_URL}${endpoint}`, body, {
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      timeout: 20000,
+    });
+    console.log(`🟢 ${endpoint} odgovor kod:`, res.data.code);
+    if (res.data.code !== 0) throw new Error(`Bolt greška ${res.data.code}: ${res.data.message}`);
+    return res.data.data;
+  } catch (err) {
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error(`🔴 ${endpoint} greška [${err.response?.status}]:`, detail);
+    throw new Error(detail);
+  }
 }
 
 async function getDrivers() {
@@ -101,7 +109,7 @@ async function buildDailyReport(date) {
   const startTs  = Math.floor(dayStart.getTime() / 1000);
   const endTs    = Math.floor(dayEnd.getTime()   / 1000);
 
-  console.log(`📊 Dohvaćam podatke za ${date}`);
+  console.log(`📊 Dohvaćam podatke za ${date} (${startTs} - ${endTs})`);
   const [drivers, orders, stateLogs] = await Promise.all([
     getDrivers(), getOrders(startTs, endTs), getStateLogs(startTs, endTs),
   ]);
