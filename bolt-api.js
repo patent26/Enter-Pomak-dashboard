@@ -1,203 +1,161 @@
-// bolt-api.js — Bolt Fleet API klijent
+// bolt-api.js — Bolt Fleet API klijent (Fleet Integration Gateway)
 const axios = require('axios');
-const dayjs = require('dayjs');
 
-const BASE_URL = 'https://api.bolt.eu/fleet/v1';
+const OIDC_URL = 'https://oidc.bolt.eu/token';
+const API_URL  = 'https://node.bolt.eu/fleet-integration-gateway';
+const COMPANY_ID = 318363;
 
-const client = axios.create({
-  baseURL: BASE_URL,
-  headers: {
-    'Authorization': `Bearer ${process.env.BOLT_API_KEY}`,
-    'Content-Type': 'application/json',
-  },
-  timeout: 15000,
-});
+let tokenCache = { token: null, expiresAt: 0 };
 
-// Povuci sve vozače u floti
+async function getToken() {
+  const now = Date.now();
+  if (tokenCache.token && now < tokenCache.expiresAt - 30000) return tokenCache.token;
+  const params = new URLSearchParams();
+  params.append('client_id',     process.env.BOLT_API_KEY);
+  params.append('client_secret', process.env.BOLT_CLIENT_SECRET);
+  params.append('grant_type',    'client_credentials');
+  params.append('scope',         'fleet-integration:api');
+  const res = await axios.post(OIDC_URL, params, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: 10000,
+  });
+  tokenCache.token     = res.data.access_token;
+  tokenCache.expiresAt = now + (res.data.expires_in || 600) * 1000;
+  console.log('✅ OAuth2 token dohvaćen');
+  return tokenCache.token;
+}
+
+async function apiPost(endpoint, body = {}) {
+  const token = await getToken();
+  const res = await axios.post(`${API_URL}${endpoint}`, body, {
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    timeout: 20000,
+  });
+  if (res.data.code !== 0) throw new Error(`Bolt API greška ${res.data.code}: ${res.data.message}`);
+  return res.data.data;
+}
+
 async function getDrivers() {
-  try {
-    const response = await client.get(`/fleets/${process.env.BOLT_FLEET_ID}/drivers`);
-    return response.data.drivers || response.data || [];
-  } catch (err) {
-    console.error('Greška pri dohvaćanju vozača:', err.response?.data || err.message);
-    throw err;
-  }
+  const data = await apiPost('/fleetIntegration/v1/getDrivers', {
+    company_id: COMPANY_ID, limit: 1000, offset: 0, portal_status: 'active',
+  });
+  return data.drivers || [];
 }
 
-// Povuci statistike za određeni datum
-async function getDriverStats(driverId, date) {
-  const from = `${date}T00:00:00Z`;
-  const to   = `${date}T23:59:59Z`;
-  try {
-    const response = await client.get(`/fleets/${process.env.BOLT_FLEET_ID}/drivers/${driverId}/statistics`, {
-      params: { from, to }
+async function getOrders(startTs, endTs) {
+  const orders = [];
+  let offset = 0;
+  while (true) {
+    const data = await apiPost('/fleetIntegration/v1/getFleetOrders', {
+      company_id: COMPANY_ID, start_ts: startTs, end_ts: endTs,
+      time_range_filter_type: 'price_review', limit: 1000, offset,
     });
-    return response.data;
-  } catch (err) {
-    console.error(`Greška statistike za vozača ${driverId}:`, err.response?.data || err.message);
-    return null;
+    const batch = data.orders || [];
+    orders.push(...batch);
+    if (batch.length < 1000) break;
+    offset += 1000;
   }
+  return orders;
 }
 
-// Povuci smjene za određeni datum
-async function getDriverShifts(driverId, date) {
-  const from = `${date}T00:00:00Z`;
-  const to   = `${date}T23:59:59Z`;
-  try {
-    const response = await client.get(`/fleets/${process.env.BOLT_FLEET_ID}/drivers/${driverId}/shifts`, {
-      params: { from, to }
+async function getStateLogs(startTs, endTs) {
+  const logs = [];
+  let offset = 0;
+  while (true) {
+    const data = await apiPost('/fleetIntegration/v1/getFleetStateLogs', {
+      company_id: COMPANY_ID, start_ts: startTs, end_ts: endTs, limit: 1000, offset,
     });
-    return response.data.shifts || response.data || [];
-  } catch (err) {
-    return [];
+    const batch = data.state_logs || [];
+    logs.push(...batch);
+    if (batch.length < 1000) break;
+    offset += 1000;
   }
+  return logs;
 }
 
-// Parsira naziv smjene iz Bolt API odgovora
-// Bolt koristi: "morning_shift", "afternoon_shift", "weekend_shift" ili
-//               "Morning Shift", "Afternoon Shift", "Weekend Shift"
-function parseShiftName(raw) {
-  if (!raw) return null;
-  const s = raw.toLowerCase().replace(/[_\s]/g, '');
-  if (s.includes('morning'))   return 'Morning Shift';
-  if (s.includes('afternoon')) return 'Afternoon Shift';
-  if (s.includes('weekend'))   return 'Weekend Shift';
-  return raw; // vrati original ako nije prepoznato
+function calcHoursFromLogs(logs, driverUuid, startMs, endMs) {
+  const driverLogs = logs.filter(l => l.driver_uuid === driverUuid).sort((a, b) => a.created - b.created);
+  let onlineMs = 0, drivingMs = 0;
+  for (let i = 0; i < driverLogs.length; i++) {
+    const curr = driverLogs[i];
+    const next = driverLogs[i + 1];
+    const from = Math.max(curr.created * 1000, startMs);
+    const to   = next ? Math.min(next.created * 1000, endMs) : endMs;
+    const dur  = Math.max(0, to - from);
+    const state = (curr.state || '').toLowerCase();
+    if (['waiting', 'online', 'accepted'].includes(state)) onlineMs  += dur;
+    if (['on_ride', 'accepted'].includes(state))            drivingMs += dur;
+  }
+  return { onlineHours: onlineMs / 3600000, drivingHours: drivingMs / 3600000 };
 }
 
-// Izgradi kompletan report za sve vozače za određeni datum
+function calcAcceptRate(driverOrders) {
+  if (!driverOrders.length) return 0;
+  const cancelled = driverOrders.filter(o => o.order_status === 'driver_cancelled' || o.driver_cancelled_reason).length;
+  return ((driverOrders.length - cancelled) / driverOrders.length) * 100;
+}
+
 async function buildDailyReport(date) {
-  const drivers = await getDrivers();
+  const dayStart = new Date(`${date}T00:00:00+02:00`);
+  const dayEnd   = new Date(`${date}T23:59:59+02:00`);
+  const startTs  = Math.floor(dayStart.getTime() / 1000);
+  const endTs    = Math.floor(dayEnd.getTime()   / 1000);
+
+  console.log(`📊 Dohvaćam podatke za ${date}`);
+  const [drivers, orders, stateLogs] = await Promise.all([
+    getDrivers(), getOrders(startTs, endTs), getStateLogs(startTs, endTs),
+  ]);
+  console.log(`👥 ${drivers.length} vozača, 🚗 ${orders.length} narudžbi, 📋 ${stateLogs.length} logova`);
+
   const results = [];
-
   for (const driver of drivers) {
-    const [stats, shifts] = await Promise.all([
-      getDriverStats(driver.id, date),
-      getDriverShifts(driver.id, date),
-    ]);
+    const uuid = driver.driver_uuid;
+    const name = `${driver.first_name} ${driver.last_name}`.trim();
+    const driverOrders    = orders.filter(o => o.driver_uuid === uuid);
+    const completedOrders = driverOrders.filter(o => o.order_status === 'finished' || o.order_drop_off_timestamp > 0);
+    const hasLogs = stateLogs.some(l => l.driver_uuid === uuid);
+    if (!completedOrders.length && !driverOrders.length && !hasLogs) continue;
 
-    if (!stats) {
-      results.push({
-        id: driver.id,
-        name: `${driver.first_name} ${driver.last_name}`,
-        phone: driver.phone || '-',
-        error: true,
-        date,
-      });
-      continue;
-    }
+    const netRevenue = completedOrders.reduce((s, o) => s + (o.order_price?.net_earnings || 0), 0);
+    const kmDriven   = completedOrders.reduce((s, o) => s + (o.ride_distance || 0), 0) / 1000;
+    const { onlineHours, drivingHours } = calcHoursFromLogs(stateLogs, uuid, dayStart.getTime(), dayEnd.getTime());
+    const netHourly  = onlineHours > 0 ? netRevenue / onlineHours : 0;
+    const acceptRate = calcAcceptRate(driverOrders);
+    const ridesCount = completedOrders.length;
 
-    // ── Prihodi — NETO (nakon Bolt provizije) ──────────────────────────
-    // Bolt API polja za neto (nakon što Bolt uzme svoju proviziju):
-    //   net_earnings, net_revenue, earnings.net, driver_earnings_net
-    // Bruto polja (koje NE koristimo): gross_revenue, total_revenue, earnings.gross
-    const netRevenue = (
-      stats.net_earnings          ??   // najčešće ime u novijim verzijama
-      stats.net_revenue           ??
-      stats.earnings?.net         ??
-      stats.driver_earnings_net   ??
-      stats.driver_earnings       ??
-      0
-    );
+    const MIN_HOURLY    = parseFloat(process.env.ALERT_MIN_NET_HOURLY   || 15);
+    const MIN_REVENUE   = parseFloat(process.env.ALERT_MIN_NET_REVENUE  || 180);
+    const MIN_KM        = parseFloat(process.env.ALERT_MIN_KM           || 150);
+    const MAX_KM        = parseFloat(process.env.ALERT_MAX_KM           || 300);
+    const MIN_ACCEPT    = parseFloat(process.env.ALERT_MIN_ACCEPTANCE   || 85);
+    const MIN_DRIVE_HRS = parseFloat(process.env.ALERT_MIN_DRIVING_HRS  || 8);
 
-    // ── Sati ───────────────────────────────────────────────────────────
-    // online_hours  = ukupno online (čekanje + vožnja)
-    // driving_hours = sati stvarne vožnje s putnicima / u vožnji
-    const onlineHours  = stats.online_hours   ?? stats.hours_worked ?? stats.working_hours ?? 0;
-    const drivingHours = (
-      stats.driving_hours       ??
-      stats.trip_hours          ??
-      stats.in_ride_hours       ??
-      stats.active_hours        ??
-      onlineHours               // fallback na online ako driving nije dostupno
-    );
-
-    // ── Ostale metrike ─────────────────────────────────────────────────
-    const kmDriven   = stats.distance_km ?? stats.total_distance_km ?? (stats.distance_meters ? stats.distance_meters / 1000 : 0);
-    const acceptRate = stats.acceptance_rate ?? stats.order_acceptance_rate ?? 0;
-    const ridesCount = stats.completed_rides ?? stats.trips_completed ?? stats.rides ?? 0;
-
-    // ── Neto po satu (na bazi online sati, jer je to standard) ─────────
-    const netHourly = onlineHours > 0 ? netRevenue / onlineHours : 0;
-
-    // ── Smjene ─────────────────────────────────────────────────────────
-    // Bolt šalje smjene kao: { name: "Morning Shift", status: "completed"|"missed"|"active", ... }
-    let assignedShiftName = null;
-    let shiftStatus       = null; // 'completed' | 'missed' | 'active' | null
-
-    if (shifts.length > 0) {
-      // Uzmi prvu/jedinu smjenu za taj dan
-      const shift = shifts[0];
-      assignedShiftName = parseShiftName(
-        shift.name ?? shift.shift_name ?? shift.type ?? shift.shift_type
-      );
-      const rawStatus = (shift.status ?? shift.state ?? '').toLowerCase();
-      if (rawStatus.includes('complet'))  shiftStatus = 'completed';
-      else if (rawStatus.includes('miss')) shiftStatus = 'missed';
-      else if (rawStatus.includes('activ') || rawStatus.includes('progress')) shiftStatus = 'active';
-      else shiftStatus = rawStatus || null;
-    }
-
-    // ── Alarmi ────────────────────────────────────────────────────────
-    const MIN_HOURLY    = parseFloat(process.env.ALERT_MIN_NET_HOURLY  || 15);
-    const MIN_REVENUE   = parseFloat(process.env.ALERT_MIN_NET_REVENUE || 180);
-    const MIN_KM        = parseFloat(process.env.ALERT_MIN_KM          || 150);
-    const MAX_KM        = parseFloat(process.env.ALERT_MAX_KM          || 300);
-    const MIN_ACCEPT    = parseFloat(process.env.ALERT_MIN_ACCEPTANCE  || 85);
-    const MIN_DRIVE_HRS = parseFloat(process.env.ALERT_MIN_DRIVING_HRS || 8);
-
-    const alerts = [];
     const wasActive = onlineHours > 0 || ridesCount > 0;
-
+    const alerts = [];
     if (wasActive) {
-      if (netHourly < MIN_HOURLY)
-        alerts.push({ type: 'danger',  code: 'low_hourly',   msg: `Neto/sat ispod ${MIN_HOURLY} € — iznosi ${netHourly.toFixed(2)} €/h` });
-
-      if (netRevenue < MIN_REVENUE)
-        alerts.push({ type: 'warning', code: 'low_revenue',  msg: `Neto promet ispod ${MIN_REVENUE} € — iznosi ${netRevenue.toFixed(2)} €` });
-
-      if (kmDriven < MIN_KM)
-        alerts.push({ type: 'warning', code: 'low_km',       msg: `Ispod ${MIN_KM} km — odvezeno ${kmDriven.toFixed(0)} km` });
-
-      if (kmDriven > MAX_KM)
-        alerts.push({ type: 'info',    code: 'high_km',      msg: `Više od ${MAX_KM} km — odvezeno ${kmDriven.toFixed(0)} km` });
-
-      if (acceptRate < MIN_ACCEPT && ridesCount > 0)
-        alerts.push({ type: 'danger',  code: 'low_accept',   msg: `Prihvaćenost ispod ${MIN_ACCEPT}% — iznosi ${acceptRate.toFixed(1)}%` });
-
-      if (drivingHours < MIN_DRIVE_HRS)
-        alerts.push({ type: 'warning', code: 'low_drive_hrs', msg: `Manje od ${MIN_DRIVE_HRS}h u vožnji — iznosi ${drivingHours.toFixed(1)}h` });
+      if (netHourly    < MIN_HOURLY)                   alerts.push({ type: 'danger',  code: 'low_hourly',    msg: `Neto/sat ispod ${MIN_HOURLY} € — iznosi ${netHourly.toFixed(2)} €/h` });
+      if (netRevenue   < MIN_REVENUE)                  alerts.push({ type: 'warning', code: 'low_revenue',   msg: `Neto promet ispod ${MIN_REVENUE} € — iznosi ${netRevenue.toFixed(2)} €` });
+      if (kmDriven     < MIN_KM)                       alerts.push({ type: 'warning', code: 'low_km',        msg: `Ispod ${MIN_KM} km — odvezeno ${kmDriven.toFixed(0)} km` });
+      if (kmDriven     > MAX_KM)                       alerts.push({ type: 'info',    code: 'high_km',       msg: `Više od ${MAX_KM} km — odvezeno ${kmDriven.toFixed(0)} km` });
+      if (acceptRate   < MIN_ACCEPT && ridesCount > 0) alerts.push({ type: 'danger',  code: 'low_accept',    msg: `Prihvaćenost ispod ${MIN_ACCEPT}% — iznosi ${acceptRate.toFixed(1)}%` });
+      if (drivingHours < MIN_DRIVE_HRS)                alerts.push({ type: 'warning', code: 'low_drive_hrs', msg: `Manje od ${MIN_DRIVE_HRS}h u vožnji — iznosi ${drivingHours.toFixed(1)}h` });
     }
-
-    // Alarm za smjenu — ako je dodijeljena smjena a status je 'missed'
-    if (shiftStatus === 'missed')
-      alerts.push({ type: 'danger', code: 'shift_missed', msg: `Nije odradio smjenu (${assignedShiftName || 'zadana smjena'})` });
 
     results.push({
-      id:            driver.id,
-      name:          `${driver.first_name} ${driver.last_name}`,
-      phone:         driver.phone || '-',
-      date,
-      // Financije — sve NETO (nakon Bolt provizije)
-      netRevenue:    Math.round(netRevenue    * 100) / 100,
-      netHourly:     Math.round(netHourly     * 100) / 100,
-      // Sati
-      onlineHours:   Math.round(onlineHours   * 10) / 10,
-      drivingHours:  Math.round(drivingHours  * 10) / 10,
-      // Ostalo
-      kmDriven:      Math.round(kmDriven      * 10) / 10,
-      acceptRate:    Math.round(acceptRate     * 10) / 10,
-      ridesCount,
-      // Smjena
-      assignedShiftName,
-      shiftStatus,
-      // Alarmi
-      alerts,
-      hasAlerts: alerts.length > 0,
+      id: uuid, name, phone: driver.phone || '-', date,
+      netRevenue:   Math.round(netRevenue   * 100) / 100,
+      netHourly:    Math.round(netHourly    * 100) / 100,
+      onlineHours:  Math.round(onlineHours  * 10)  / 10,
+      drivingHours: Math.round(drivingHours * 10)  / 10,
+      kmDriven:     Math.round(kmDriven     * 10)  / 10,
+      acceptRate:   Math.round(acceptRate   * 10)  / 10,
+      ridesCount, assignedShiftName: null, shiftStatus: null,
+      alerts, hasAlerts: alerts.length > 0,
     });
   }
 
+  results.sort((a, b) => (b.hasAlerts - a.hasAlerts) || (b.netRevenue - a.netRevenue));
   return results;
 }
 
-module.exports = { buildDailyReport, getDrivers };
+module.exports = { buildDailyReport };
