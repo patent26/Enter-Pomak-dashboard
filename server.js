@@ -5,7 +5,7 @@ const express = require('express');
 const cron    = require('node-cron');
 const dayjs   = require('dayjs');
 const { buildDailyReport } = require('./bolt-api');
-const { parseRidesCSV, buildReportFromRidesCSV } = require('./csv-parser');
+const { parseRidesCSV, parseActivityCSV, detectCSVType, buildCombinedReport } = require('./csv-parser');
 const { sendDailyReport }  = require('./mailer');
 
 const app  = express();
@@ -84,23 +84,36 @@ app.post('/api/send-report', async (req, res) => {
 });
 
 // Health check
-// CSV upload endpoint — očekuje "Povijest vožnji" CSV
+// CSV upload endpoint — prima jedan ili dva CSV-a odjednom
 app.post('/api/upload-csv', async (req, res) => {
   try {
-    const { csvText, date } = req.body;
-    if (!csvText) return res.status(400).json({ error: 'Nema CSV podataka' });
+    const { csvFiles, date } = req.body;
+    // csvFiles = [{ name: 'filename.csv', content: '...' }, ...]
+    if (!csvFiles || !csvFiles.length) return res.status(400).json({ error: 'Nema CSV podataka' });
 
-    const targetDate = date || dayjs().subtract(1, 'day').format('YYYY-MM-DD');
-    console.log(`📄 CSV upload za ${targetDate}...`);
+    let ridesData    = null;
+    let activityData = null;
+    let csvDate      = null;
 
-    // Online sati iz API cache-a ako imamo
-    const onlineHoursMap = {};
-    if (reportCache.data) {
-      reportCache.data.forEach(d => { onlineHoursMap[d.name] = d.onlineHours; });
+    for (const file of csvFiles) {
+      const type = detectCSVType(file.content);
+      console.log(`📄 CSV: ${file.name} → tip: ${type}`);
+
+      if (type === 'rides') {
+        const { driverMap, csvDate: d } = parseRidesCSV(file.content);
+        ridesData = driverMap;
+        if (d) csvDate = d;
+      } else {
+        const { driverMap, csvDate: d } = parseActivityCSV(file.content);
+        activityData = driverMap;
+        if (d) csvDate = d;
+      }
     }
 
-    const driverMap = parseRidesCSV(csvText);
-    const data = buildReportFromRidesCSV(driverMap, targetDate, onlineHoursMap);
+    const targetDate = date || csvDate || dayjs().subtract(1, 'day').format('YYYY-MM-DD');
+    console.log(`📄 Generiram report za ${targetDate}...`);
+
+    const data = buildCombinedReport(ridesData, activityData, targetDate);
     reportCache = { date: targetDate, data, fetchedAt: Date.now() };
 
     console.log(`📄 CSV parsiran: ${data.length} vozača`);
