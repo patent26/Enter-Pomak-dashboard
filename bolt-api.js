@@ -63,6 +63,8 @@ async function getOrders(startTs, endTs) {
   while (true) {
     const data = await apiPost('/fleetIntegration/v1/getFleetOrders', {
       company_ids: [COMPANY_ID],
+      start_ts: startTs,
+      end_ts: endTs,
       limit: 1000,
       offset,
     });
