@@ -5,7 +5,7 @@ const express = require('express');
 const cron    = require('node-cron');
 const dayjs   = require('dayjs');
 const { buildDailyReport } = require('./bolt-api');
-const { parseRidesCSV, parseActivityCSV, detectCSVType, buildCombinedReport } = require('./csv-parser');
+const { parseRidesCSV, parseActivityCSV, parsePerformanceCSV, detectCSVType, buildCombinedReport } = require('./csv-parser');
 const { saveReport, loadReport } = require('./storage');
 const { sendDailyReport }  = require('./mailer');
 
@@ -104,11 +104,17 @@ app.post('/api/upload-csv', async (req, res) => {
     let activityData = null;
     let csvDate      = null;
 
+    let performanceData = null;
+
     for (const file of csvFiles) {
       const type = detectCSVType(file.content);
       console.log(`📄 CSV: ${file.name} → tip: ${type}`);
 
-      if (type === 'rides') {
+      if (type === 'performance') {
+        const { driverMap } = parsePerformanceCSV(file.content);
+        performanceData = driverMap;
+        console.log(`📄 Performance CSV: ${Object.keys(driverMap).length} vozača`);
+      } else if (type === 'rides') {
         const { driverMap, csvDate: d } = parseRidesCSV(file.content);
         ridesData = driverMap;
         if (d) csvDate = d;
@@ -122,7 +128,7 @@ app.post('/api/upload-csv', async (req, res) => {
     const targetDate = date || csvDate || dayjs().subtract(1, 'day').format('YYYY-MM-DD');
     console.log(`📄 Generiram report za ${targetDate}...`);
 
-    const data = buildCombinedReport(ridesData, activityData, targetDate);
+    const data = buildCombinedReport(ridesData, activityData, targetDate, performanceData);
     reportCache = { date: targetDate, data, fetchedAt: Date.now() };
 
     console.log(`📄 CSV parsiran: ${data.length} vozača`);
