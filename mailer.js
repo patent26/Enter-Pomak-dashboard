@@ -138,10 +138,16 @@ async function sendDailyReport(drivers, date) {
 
   const html = buildEmailHTML(drivers, date);
 
-  // Resend šalje samo na jednu adresu po pozivu na besplatnom planu
-  // pa šaljemo svima odjednom u to[] array
-  await sendViaResend(recipients, subject, html);
-  console.log(`📧 Izvještaj poslan na: ${recipients.join(', ')}`);
+  // Resend besplatni plan — šalje jedan po jedan
+  for (const recipient of recipients) {
+    try {
+      await sendViaResend([recipient], subject, html);
+      console.log(`📧 Mail poslan na: ${recipient}`);
+    } catch (err) {
+      console.error(`📧 Greška za ${recipient}:`, err.message);
+    }
+  }
 }
+
 
 module.exports = { sendDailyReport };
