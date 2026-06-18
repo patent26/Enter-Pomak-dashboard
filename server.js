@@ -5,7 +5,7 @@ const express = require('express');
 const cron    = require('node-cron');
 const dayjs   = require('dayjs');
 const { buildDailyReport } = require('./bolt-api');
-const { parseCSV, buildReportFromCSV } = require('./csv-parser');
+const { parseRidesCSV, buildReportFromRidesCSV } = require('./csv-parser');
 const { sendDailyReport }  = require('./mailer');
 
 const app  = express();
@@ -84,7 +84,7 @@ app.post('/api/send-report', async (req, res) => {
 });
 
 // Health check
-// CSV upload endpoint
+// CSV upload endpoint — očekuje "Povijest vožnji" CSV
 app.post('/api/upload-csv', async (req, res) => {
   try {
     const { csvText, date } = req.body;
@@ -93,16 +93,14 @@ app.post('/api/upload-csv', async (req, res) => {
     const targetDate = date || dayjs().subtract(1, 'day').format('YYYY-MM-DD');
     console.log(`📄 CSV upload za ${targetDate}...`);
 
-    // Parse CSV
-    const driverMap = parseCSV(csvText);
+    // Online sati iz API cache-a ako imamo
+    const onlineHoursMap = {};
+    if (reportCache.data) {
+      reportCache.data.forEach(d => { onlineHoursMap[d.name] = d.onlineHours; });
+    }
 
-    // Pokušaj dohvatiti km iz API-ja
-    let apiDrivers = [];
-    try {
-      apiDrivers = reportCache.data || [];
-    } catch(e) {}
-
-    const data = buildReportFromCSV(driverMap, targetDate, apiDrivers);
+    const driverMap = parseRidesCSV(csvText);
+    const data = buildReportFromRidesCSV(driverMap, targetDate, onlineHoursMap);
     reportCache = { date: targetDate, data, fetchedAt: Date.now() };
 
     console.log(`📄 CSV parsiran: ${data.length} vozača`);
