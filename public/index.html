@@ -339,6 +339,7 @@
   <div class="header-right">
     <input type="date" class="date-picker" id="date-input" />
     <button class="btn btn-outline" id="refresh-btn" onclick="loadReport(true)">↺ Osvježi</button>
+    <label class="btn btn-outline" style="cursor:pointer;" title="Učitaj Bolt CSV izvještaj">📄 CSV<input type="file" accept=".csv" id="csv-input" style="display:none" onchange="uploadCSV(this)"></label>
     <button class="btn btn-primary" id="mail-btn" onclick="sendReport()">📧 Pošalji mail</button>
   </div>
 </header>
@@ -654,6 +655,46 @@
     const t = document.getElementById('toast');
     t.textContent = msg; t.className = 'show ' + type;
     setTimeout(() => { t.className = ''; }, 3500);
+  }
+
+  // ── CSV Upload ────────────────────────────────────────────────
+  async function uploadCSV(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const date = document.getElementById('date-input').value;
+
+    showLoading(true);
+    hideError();
+    document.getElementById('summary-bar').style.display = 'none';
+
+    try {
+      const csvText = await file.text();
+      const headers = { 'Content-Type': 'application/json' };
+      if (storedKey) headers['x-dashboard-key'] = storedKey;
+
+      const res = await fetch('/api/upload-csv', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ csvText, date }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error || 'Greška pri uploadu');
+      }
+
+      const json = await res.json();
+      allDrivers = json.data || [];
+      renderSummary(allDrivers);
+      renderDrivers(allDrivers);
+      document.getElementById('fetch-time').textContent = `📄 CSV · ${file.name}`;
+      showToast(`✅ CSV učitan: ${allDrivers.length} vozača`, 'success');
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      showLoading(false);
+      input.value = ''; // reset input
+    }
   }
 
   init();
