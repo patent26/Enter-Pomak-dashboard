@@ -100,7 +100,7 @@
     /* ── Summary bar ── */
     .summary-bar {
       display: grid;
-      grid-template-columns: repeat(6, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       gap: 12px;
       margin-bottom: 20px;
     }
@@ -367,9 +367,14 @@
       <div class="stat-sub"  id="ss-accept">vozači 8h+ vožnje</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Ukupno km</div>
+      <div class="stat-label">Ukupno / Prosj. km</div>
       <div class="stat-value" id="sv-km">—</div>
       <div class="stat-sub"  id="ss-km"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Prosj. neto</div>
+      <div class="stat-value" id="sv-avgnet">—</div>
+      <div class="stat-sub"  id="ss-avgnet">po vozaču</div>
     </div>
     <div class="stat-card alert-card">
       <div class="stat-label">Aktivni alarmi</div>
@@ -510,6 +515,7 @@
     document.getElementById('sv-accept').textContent = pct(avgAccept);
     document.getElementById('sv-km').textContent     = km(totalKm);
     document.getElementById('ss-km').textContent     = `prosj. ${km(totalKm / active.length)}/vozač`;
+    document.getElementById('sv-avgnet').textContent = eur(totalRev / active.length);
     document.getElementById('sv-alerts').textContent = totalAlerts;
     document.getElementById('ss-alerts').textContent = `${drivers.filter(d=>d.hasAlerts).length} vozača`;
     if (base.length < active.length) {
