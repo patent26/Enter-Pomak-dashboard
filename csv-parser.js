@@ -21,8 +21,12 @@ function pf(val) {
 // Prepoznaj tip CSV-a po zaglavlju
 function detectCSVType(csvText) {
   const first = csvText.split('\n')[0].toLowerCase();
-  if (first.includes('status') || first.includes('udaljenost') || first.includes('ruta')) return 'rides';
+  if (first.includes('ukupna stopa prihva') || first.includes('u\u010dinkovitost') || first.includes('zavr\u0161ene vožnje') && first.includes('u\u010dinak')) return 'performance';
+  if (first.includes('u\u010dinak') || first.includes('u\u010dinkovitost|%') || first.includes('efektivna')) return 'performance';
+  if (first.includes('status') && first.includes('udaljenost') || first.includes('ruta')) return 'rides';
   if (first.includes('aktivno') || first.includes('smjena') || first.includes('shift')) return 'activity';
+  // Provjeri po stupcima — performance ima "Učinkovitost"
+  if (first.includes('prihva') && first.includes('min') && first.includes('km')) return 'performance';
   return 'rides';
 }
 
@@ -114,8 +118,53 @@ function parseActivityCSV(csvText) {
   return { driverMap, csvDate };
 }
 
+
+// Parser: "Vozači Učinak" CSV — direktno Boltovi izračuni
+// Stupci: Vozač, Status, Kategorije, Email, Telefon, Gotovina,
+//         Uspješnost|%, Završene vožnje, Ukupna stopa prihvaćanja|%,
+//         Efektivna stopa prihvaćanja|%, Vrijeme na mreži (min),
+//         Aktivno vrijeme na mreži (min), Učinkovitost|%,
+//         Stopa završenih (sve)|%, Stopa završenih (prihvaćene)|%,
+//         Prosj. udaljenost|km, Ukupna udaljenost|km, Ocjena, ID, UUID
+function parsePerformanceCSV(csvText) {
+  const lines = csvText.split('\n').filter(l => l.trim());
+  if (lines.length < 2) throw new Error('Performance CSV je prazan');
+
+  const driverMap = {};
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = parseCSVLine(lines[i]);
+    if (row.length < 17) continue;
+
+    const driverName = row[0]?.trim();
+    const phone      = row[4]?.trim();
+    if (!driverName) continue;
+
+    const ridesCount   = parseInt(row[7])  || 0;
+    const acceptRate   = pf(row[8]);   // Ukupna stopa prihvaćanja
+    const effectiveAcc = pf(row[9]);   // Efektivna stopa prihvaćanja
+    const onlineMin    = pf(row[10]);  // Vrijeme na mreži (min)
+    const activeMin    = pf(row[11]);  // Aktivno vrijeme na mreži (min)
+    const utilisation  = pf(row[12]);  // Učinkovitost %
+    const avgKm        = pf(row[15]);  // Prosj. udaljenost vožnje
+    const totalKm      = pf(row[16]);  // Ukupna udaljenost vožnje
+
+    if (!driverMap[driverName]) {
+      driverMap[driverName] = {
+        name: driverName,
+        phone: phone || '-',
+        ridesCount, acceptRate, effectiveAcc,
+        onlineMin, activeMin, utilisation,
+        avgKm, totalKm,
+      };
+    }
+  }
+
+  return { driverMap, csvDate: null };
+}
+
 // Kombinirani report iz oba CSV-a
-function buildCombinedReport(ridesData, activityData, date) {
+function buildCombinedReport(ridesData, activityData, date, performanceData = null) {
   const BOLT_COMMISSION = parseFloat(process.env.BOLT_COMMISSION || 0.27);
   const MIN_HOURLY    = parseFloat(process.env.ALERT_MIN_NET_HOURLY   || 15);
   const MIN_REVENUE   = parseFloat(process.env.ALERT_MIN_NET_REVENUE  || 180);
@@ -125,33 +174,41 @@ function buildCombinedReport(ridesData, activityData, date) {
   const MIN_DRIVE_HRS = parseFloat(process.env.ALERT_MIN_DRIVING_HRS  || 8);
 
   const allNames = new Set([
-    ...Object.keys(ridesData  || {}),
-    ...Object.keys(activityData || {}),
+    ...Object.keys(ridesData      || {}),
+    ...Object.keys(activityData   || {}),
+    ...Object.keys(performanceData || {}),
   ]);
 
   const results = [];
 
   for (const name of allNames) {
-    const r = ridesData?.[name]    || {};
-    const a = activityData?.[name] || {};
+    const r = ridesData?.[name]      || {};
+    const a = activityData?.[name]   || {};
+    const p = performanceData?.[name] || {};
 
     const grossRevenue = r.grossRevenue || 0;
     const netRevenue   = grossRevenue * (1 - BOLT_COMMISSION);
-    const kmDriven     = r.totalKm || 0;
 
-    // Sati — activity CSV je točniji
-    const onlineHours  = a.onlineMin ? a.onlineMin / 60 : (r.drivingMin || 0) / 60 * 1.05;
-    const drivingHours = a.activeMin ? a.activeMin / 60 : (r.drivingMin || 0) / 60;
+    // Km — performance CSV je najtočniji
+    const kmDriven = p.totalKm || r.totalKm || 0;
+
+    // Sati — performance CSV je najtočniji (direktno od Bolta)
+    const onlineHours  = p.onlineMin  ? p.onlineMin / 60  : (a.onlineMin  ? a.onlineMin / 60  : (r.drivingMin || 0) / 60 * 1.05);
+    const drivingHours = p.activeMin  ? p.activeMin / 60  : (a.activeMin  ? a.activeMin / 60  : (r.drivingMin || 0) / 60);
 
     const netHourly   = onlineHours > 0 ? netRevenue / onlineHours : 0;
-    const utilisation = onlineHours > 0 ? (drivingHours / onlineHours) * 100 : 0;
+    // Utilisation — direktno iz Bolta ako imamo performance CSV
+    const utilisation = p.utilisation || (onlineHours > 0 ? (drivingHours / onlineHours) * 100 : 0);
 
-    // Acceptance rate — samo završeno / (završeno + vozač nije odgovorio + vozač otkazao)
-    const completed  = r.completed || 0;
-    const driverFail = (r.driverNoResponse || 0) + (r.driverCancelled || 0);
-    const acceptRate = (completed + driverFail) > 0 ? (completed / (completed + driverFail)) * 100 : 100;
+    // Acceptance rate — direktno iz Bolta (najtočnije!)
+    const acceptRate = p.acceptRate !== undefined ? p.acceptRate :
+                       (() => {
+                         const completed  = r.completed || 0;
+                         const driverFail = (r.driverNoResponse || 0) + (r.driverCancelled || 0);
+                         return (completed + driverFail) > 0 ? (completed / (completed + driverFail)) * 100 : 100;
+                       })();
 
-    const ridesCount = completed;
+    const ridesCount = p.ridesCount || r.completed || 0;
     const wasActive  = ridesCount > 0 || onlineHours > 0;
 
     const alerts = [];
@@ -193,4 +250,4 @@ function buildCombinedReport(ridesData, activityData, date) {
   return results;
 }
 
-module.exports = { parseRidesCSV, parseActivityCSV, detectCSVType, buildCombinedReport };
+module.exports = { parseRidesCSV, parseActivityCSV, parsePerformanceCSV, detectCSVType, buildCombinedReport };
