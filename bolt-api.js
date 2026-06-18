@@ -106,10 +106,10 @@ function calcHoursFromLogs(logs, driverUuid, startMs, endMs) {
     const to   = next ? Math.min(next.created * 1000, endMs) : endMs;
     const dur  = Math.max(0, to - from);
     const state = (curr.state || '').toLowerCase();
-    // Online = bilo koji aktivni status (čekanje, prihvaćen, u vožnji)
-    if (!['inactive', 'offline', 'suspended'].includes(state)) onlineMs += dur;
-    // Driving = stvarna vožnja
-    if (['on_ride', 'accepted', 'in_ride', 'driving', 'busy'].includes(state)) drivingMs += dur;
+    // Online = waiting_orders + has_order + busy (sve osim inactive)
+    if (['waiting_orders', 'has_order', 'busy', 'waiting', 'on_ride', 'accepted', 'online'].includes(state)) onlineMs += dur;
+    // Driving = has_order (vozi putnika)
+    if (['has_order', 'on_ride', 'in_ride', 'driving', 'busy'].includes(state)) drivingMs += dur;
     console.log(`  Driver ${driverUuid.slice(0,8)} state: ${state} dur: ${Math.round(dur/60000)}min`);
   }
   return { onlineHours: onlineMs / 3600000, drivingHours: drivingMs / 3600000 };
