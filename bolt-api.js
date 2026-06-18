@@ -43,6 +43,7 @@ async function apiPost(endpoint, body = {}) {
   }
 }
 
+// getDrivers — treba company_ids (array) + start_ts + end_ts
 async function getDrivers(startTs, endTs) {
   const data = await apiPost('/fleetIntegration/v1/getDrivers', {
     company_id: COMPANY_ID,
@@ -55,14 +56,13 @@ async function getDrivers(startTs, endTs) {
   return data.drivers || [];
 }
 
+// getFleetOrders — treba company_ids (array) + start_ts + end_ts
 async function getOrders(startTs, endTs) {
   const orders = [];
   let offset = 0;
   while (true) {
     const data = await apiPost('/fleetIntegration/v1/getFleetOrders', {
       company_ids: [COMPANY_ID],
-      start_ts: startTs,
-      end_ts: endTs,
       limit: 1000,
       offset,
     });
@@ -74,6 +74,7 @@ async function getOrders(startTs, endTs) {
   return orders;
 }
 
+// getFleetStateLogs — treba company_id (broj, bez s) + start_ts + end_ts
 async function getStateLogs(startTs, endTs) {
   const logs = [];
   let offset = 0;
@@ -103,8 +104,11 @@ function calcHoursFromLogs(logs, driverUuid, startMs, endMs) {
     const to   = next ? Math.min(next.created * 1000, endMs) : endMs;
     const dur  = Math.max(0, to - from);
     const state = (curr.state || '').toLowerCase();
-    if (['waiting', 'online', 'accepted'].includes(state)) onlineMs  += dur;
-    if (['on_ride', 'accepted'].includes(state))            drivingMs += dur;
+    // Online = bilo koji aktivni status (čekanje, prihvaćen, u vožnji)
+    if (!['inactive', 'offline', 'suspended'].includes(state)) onlineMs += dur;
+    // Driving = stvarna vožnja
+    if (['on_ride', 'accepted', 'in_ride', 'driving', 'busy'].includes(state)) drivingMs += dur;
+    console.log(`  Driver ${driverUuid.slice(0,8)} state: ${state} dur: ${Math.round(dur/60000)}min`);
   }
   return { onlineHours: onlineMs / 3600000, drivingHours: drivingMs / 3600000 };
 }
@@ -146,10 +150,9 @@ async function buildDailyReport(date) {
     const netRevenue = completedOrders.reduce((s, o) => s + (o.order_price?.net_earnings || 0), 0);
     const kmDriven   = completedOrders.reduce((s, o) => s + (o.ride_distance || 0), 0) / 1000;
     const { onlineHours, drivingHours } = calcHoursFromLogs(stateLogs, uuid, dayStart.getTime(), dayEnd.getTime());
-    const netHourly   = onlineHours > 0 ? netRevenue / onlineHours : 0;
-    const acceptRate  = calcAcceptRate(driverOrders);
-    const utilisation = onlineHours > 0 ? (drivingHours / onlineHours) * 100 : 0;
-    const ridesCount  = completedOrders.length;
+    const netHourly  = onlineHours > 0 ? netRevenue / onlineHours : 0;
+    const acceptRate = calcAcceptRate(driverOrders);
+    const ridesCount = completedOrders.length;
 
     const MIN_HOURLY    = parseFloat(process.env.ALERT_MIN_NET_HOURLY   || 15);
     const MIN_REVENUE   = parseFloat(process.env.ALERT_MIN_NET_REVENUE  || 180);
@@ -168,6 +171,9 @@ async function buildDailyReport(date) {
       if (acceptRate   < MIN_ACCEPT && ridesCount > 0) alerts.push({ type: 'danger',  code: 'low_accept',    msg: `Prihvaćenost ispod ${MIN_ACCEPT}% — iznosi ${acceptRate.toFixed(1)}%` });
       if (drivingHours < MIN_DRIVE_HRS)                alerts.push({ type: 'warning', code: 'low_drive_hrs', msg: `Manje od ${MIN_DRIVE_HRS}h u vožnji — iznosi ${drivingHours.toFixed(1)}h` });
     }
+
+    // Utilisation = % vremena u vožnji vs ukupno online
+    const utilisation = onlineHours > 0 ? (drivingHours / onlineHours) * 100 : 0;
 
     results.push({
       id: uuid, name, phone: driver.phone || '-', date,
