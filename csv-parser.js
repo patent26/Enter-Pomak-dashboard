@@ -1,94 +1,92 @@
-// csv-parser.js — Parsira Bolt Fleet CSV izvještaj
-// Format: Datum, Vozač, Vozilo, Detalji, Ukupno trajanje smjene, Trajanje smjene,
-//         Vrijeme na mreži (min), Aktivno vrijeme na mreži (min), Trajanje odmora (min),
-//         Ukupni broj vožnji, Završeno, Korisnik je otkazao, Vozač je otkazao,
-//         Ukupna plaćanja, Gotovina, Terminal za kartice, Aplikacijsko plaćanje, Business
-
-function parseCSV(csvText) {
-  const lines = csvText.split('\n').filter(l => l.trim());
-  if (lines.length < 2) throw new Error('CSV je prazan');
-
-  // Parse header
-  const header = parseCSVLine(lines[0]);
-
-  // Group rows by driver name
-  const driverMap = {};
-
-  for (let i = 1; i < lines.length; i++) {
-    const row = parseCSVLine(lines[i]);
-    if (row.length < 10) continue;
-
-    const driverName    = row[1]?.trim();
-    if (!driverName) continue;
-
-    const onlineMin     = parseFloat(row[6])  || 0; // Vrijeme na mreži (min)
-    const activeMin     = parseFloat(row[7])  || 0; // Aktivno vrijeme na mreži (min)
-    const breakMin      = parseFloat(row[8])  || 0; // Trajanje odmora (min)
-    const totalRides    = parseInt(row[9])    || 0; // Ukupni broj vožnji
-    const completed     = parseInt(row[10])   || 0; // Završeno
-    const userCancelled = parseInt(row[11])   || 0; // Korisnik je otkazao
-    const driverCancelled = parseInt(row[12]) || 0; // Vozač je otkazao
-    const totalPayment  = parseFloat(row[13]?.replace(',', '.')) || 0; // Ukupna plaćanja
-
-    if (!driverMap[driverName]) {
-      driverMap[driverName] = {
-        name: driverName,
-        onlineMin: 0,
-        activeMin: 0,
-        breakMin: 0,
-        totalRides: 0,
-        completed: 0,
-        userCancelled: 0,
-        driverCancelled: 0,
-        grossRevenue: 0,
-        shifts: [],
-      };
-    }
-
-    driverMap[driverName].onlineMin      += onlineMin;
-    driverMap[driverName].activeMin      += activeMin;
-    driverMap[driverName].breakMin       += breakMin;
-    driverMap[driverName].totalRides     += totalRides;
-    driverMap[driverName].completed      += completed;
-    driverMap[driverName].userCancelled  += userCancelled;
-    driverMap[driverName].driverCancelled += driverCancelled;
-    driverMap[driverName].grossRevenue   += totalPayment;
-    driverMap[driverName].shifts.push(row[5]?.trim()); // Trajanje smjene
-  }
-
-  return driverMap;
-}
+// csv-parser.js — Parsira Bolt Fleet "Povijest vožnji" CSV
+// Stupci: Datum, Cijena finalizirana, Kreirano od, Vozač, Reg. oznaka, Model,
+//         Ruta, Vozač stigao, Vožnja završena, Trajanje dolaska (min), Trajanje vožnje (min),
+//         Kategorija, Status, Opcionalne vožnje, Udaljenost|km, Napojnice|€, Cijena vožnje|€,
+//         Način plaćanja, Naknade rezervaciju|€, Cestarina|€, Otkazne naknade|€,
+//         Tel. broj vozača, Jedinstveni identifikator, Vrsta
 
 function parseCSVLine(line) {
   const result = [];
   let current = '';
   let inQuotes = false;
-
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
-    if (char === '"') {
-      inQuotes = !inQuotes;
-    } else if (char === ',' && !inQuotes) {
-      result.push(current);
-      current = '';
-    } else {
-      current += char;
-    }
+    if (char === '"') { inQuotes = !inQuotes; }
+    else if (char === ',' && !inQuotes) { result.push(current.trim()); current = ''; }
+    else { current += char; }
   }
-  result.push(current);
+  result.push(current.trim());
   return result;
 }
 
-// Bolt provizija — izračunaj neto iz bruta
-// Bolt uzima ~27% provizije (može varirati)
-// Bolje: neto = bruto * (1 - provizija)
-// Ali iz CSV-a nemamo direktno neto, pa koristimo API neto ako imamo
-// Inače procjenimo: neto ≈ bruto * 0.73
-const BOLT_COMMISSION = parseFloat(process.env.BOLT_COMMISSION || 0.27);
+function parseFloat2(val) {
+  if (!val) return 0;
+  return parseFloat(val.replace(',', '.')) || 0;
+}
 
-function buildReportFromCSV(driverMap, date, apiDrivers = []) {
+// Acceptance rate: vozač je prihvatio = sve osim "Vozač je odbio" i "Vozač nije odgovorio"
+// Bolt formula: prihvaćeno / (prihvaćeno + odbijeno + nije odgovorio) * 100
+function calcAcceptRate(stats) {
+  const accepted = stats.completed + stats.userCancelled + stats.userNoShow + stats.driverCancelled;
+  const rejected = stats.driverRejected + stats.driverNoResponse;
+  const total = accepted + rejected;
+  return total > 0 ? (accepted / total) * 100 : 100;
+}
+
+function parseRidesCSV(csvText) {
+  const lines = csvText.split('\n').filter(l => l.trim());
+  if (lines.length < 2) throw new Error('CSV je prazan');
+
+  const driverMap = {};
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = parseCSVLine(lines[i]);
+    if (row.length < 13) continue;
+
+    const driverName = row[3]?.trim();
+    const phone      = row[21]?.trim();
+    if (!driverName) continue;
+
+    const status      = row[12]?.trim();
+    const distanceKm  = parseFloat2(row[14]);
+    const ridePrice   = parseFloat2(row[16]);
+    const cancelFee   = parseFloat2(row[20]);
+    const drivingMin  = parseFloat2(row[10]);
+
+    if (!driverMap[driverName]) {
+      driverMap[driverName] = {
+        name: driverName,
+        phone: phone || '-',
+        completed: 0,
+        userCancelled: 0,
+        userNoShow: 0,
+        driverCancelled: 0,
+        driverRejected: 0,
+        driverNoResponse: 0,
+        totalKm: 0,
+        grossRevenue: 0,
+        drivingMin: 0,
+      };
+    }
+
+    const d = driverMap[driverName];
+
+    // Kategorije statusa
+    if (status === 'Završeno')              { d.completed++;      d.totalKm += distanceKm; d.grossRevenue += ridePrice; d.drivingMin += drivingMin; }
+    else if (status === 'Putnik je otkazao') { d.userCancelled++;  d.grossRevenue += cancelFee; }
+    else if (status === 'Putnik se nije pojavio') { d.userNoShow++; d.grossRevenue += cancelFee; }
+    else if (status === 'Vozač je otkazao') { d.driverCancelled++; }
+    else if (status === 'Vozač je odbio')   { d.driverRejected++;  }
+    else if (status === 'Vozač nije odgovorio') { d.driverNoResponse++; }
+  }
+
+  return driverMap;
+}
+
+function buildReportFromRidesCSV(driverMap, date, onlineHoursMap = {}) {
   const results = [];
 
+  const BOLT_COMMISSION = parseFloat(process.env.BOLT_COMMISSION || 0.27);
   const MIN_HOURLY    = parseFloat(process.env.ALERT_MIN_NET_HOURLY   || 15);
   const MIN_REVENUE   = parseFloat(process.env.ALERT_MIN_NET_REVENUE  || 180);
   const MIN_KM        = parseFloat(process.env.ALERT_MIN_KM           || 150);
@@ -97,56 +95,53 @@ function buildReportFromCSV(driverMap, date, apiDrivers = []) {
   const MIN_DRIVE_HRS = parseFloat(process.env.ALERT_MIN_DRIVING_HRS  || 8);
 
   for (const [name, d] of Object.entries(driverMap)) {
-    // Neto iz API-ja ako imamo, inače procjenimo
-    const apiDriver = apiDrivers.find(a => a.name === name);
-    const netRevenue = apiDriver?.netRevenue || d.grossRevenue * (1 - BOLT_COMMISSION);
+    const netRevenue   = d.grossRevenue * (1 - BOLT_COMMISSION);
+    const kmDriven     = d.totalKm;
+    const drivingHours = d.drivingMin / 60;
 
-    // Sati
-    const onlineHours  = d.onlineMin / 60;
-    const drivingHours = d.activeMin / 60; // Aktivno = u vožnji
+    // Online sati iz API-ja ako imamo, inače procjenimo
+    const onlineHours  = onlineHoursMap[name] || drivingHours * 1.05;
+    const netHourly    = onlineHours > 0 ? netRevenue / onlineHours : 0;
+    const acceptRate   = calcAcceptRate(d);
+    const utilisation  = onlineHours > 0 ? (drivingHours / onlineHours) * 100 : 0;
+    const ridesCount   = d.completed;
 
-    // Neto po satu
-    const netHourly = onlineHours > 0 ? netRevenue / onlineHours : 0;
+    const totalRides = d.completed + d.userCancelled + d.userNoShow +
+                       d.driverCancelled + d.driverRejected + d.driverNoResponse;
 
-    // Acceptance rate = završeno / (završeno + vozač otkazao)
-    const denominator = d.completed + d.driverCancelled;
-    const acceptRate  = denominator > 0 ? (d.completed / denominator) * 100 : 100;
-
-    // Utilisation = aktivno / online * 100
-    const utilisation = d.onlineMin > 0 ? (d.activeMin / d.onlineMin) * 100 : 0;
-
-    // Kilometraža iz API-ja (CSV nema km direktno)
-    const kmDriven = apiDriver?.kmDriven || 0;
-
-    const wasActive = d.completed > 0 || d.totalRides > 0;
+    const wasActive = ridesCount > 0 || totalRides > 0;
     const alerts = [];
 
     if (wasActive) {
       if (netHourly    < MIN_HOURLY)                   alerts.push({ type: 'danger',  code: 'low_hourly',    msg: `Neto/sat ispod ${MIN_HOURLY} € — iznosi ${netHourly.toFixed(2)} €/h` });
       if (netRevenue   < MIN_REVENUE)                  alerts.push({ type: 'warning', code: 'low_revenue',   msg: `Neto promet ispod ${MIN_REVENUE} € — iznosi ${netRevenue.toFixed(2)} €` });
-      if (kmDriven > 0 && kmDriven < MIN_KM)           alerts.push({ type: 'warning', code: 'low_km',        msg: `Ispod ${MIN_KM} km — odvezeno ${kmDriven.toFixed(0)} km` });
-      if (kmDriven > MAX_KM)                           alerts.push({ type: 'info',    code: 'high_km',       msg: `Više od ${MAX_KM} km — odvezeno ${kmDriven.toFixed(0)} km` });
+      if (kmDriven     < MIN_KM && kmDriven > 0)       alerts.push({ type: 'warning', code: 'low_km',        msg: `Ispod ${MIN_KM} km — odvezeno ${kmDriven.toFixed(0)} km` });
+      if (kmDriven     > MAX_KM)                       alerts.push({ type: 'info',    code: 'high_km',       msg: `Više od ${MAX_KM} km — odvezeno ${kmDriven.toFixed(0)} km` });
       if (acceptRate   < MIN_ACCEPT)                   alerts.push({ type: 'danger',  code: 'low_accept',    msg: `Prihvaćenost ispod ${MIN_ACCEPT}% — iznosi ${acceptRate.toFixed(1)}%` });
       if (drivingHours < MIN_DRIVE_HRS)                alerts.push({ type: 'warning', code: 'low_drive_hrs', msg: `Manje od ${MIN_DRIVE_HRS}h u vožnji — iznosi ${drivingHours.toFixed(1)}h` });
     }
 
     results.push({
-      id:            name.replace(/\s/g, '_'),
+      id:             name.replace(/\s/g, '_'),
       name,
-      phone:         apiDriver?.phone || '-',
+      phone:          d.phone,
       date,
-      netRevenue:    Math.round(netRevenue    * 100) / 100,
-      grossRevenue:  Math.round(d.grossRevenue * 100) / 100,
-      netHourly:     Math.round(netHourly     * 100) / 100,
-      onlineHours:   Math.round(onlineHours   * 10)  / 10,
-      drivingHours:  Math.round(drivingHours  * 10)  / 10,
-      kmDriven:      Math.round(kmDriven      * 10)  / 10,
-      acceptRate:    Math.round(acceptRate    * 10)  / 10,
-      utilisation:   Math.round(utilisation   * 10)  / 10,
-      ridesCount:    d.completed,
-      totalRides:    d.totalRides,
-      userCancelled: d.userCancelled,
+      netRevenue:     Math.round(netRevenue    * 100) / 100,
+      grossRevenue:   Math.round(d.grossRevenue * 100) / 100,
+      netHourly:      Math.round(netHourly     * 100) / 100,
+      onlineHours:    Math.round(onlineHours   * 10)  / 10,
+      drivingHours:   Math.round(drivingHours  * 10)  / 10,
+      kmDriven:       Math.round(kmDriven      * 10)  / 10,
+      acceptRate:     Math.round(acceptRate    * 10)  / 10,
+      utilisation:    Math.round(utilisation   * 10)  / 10,
+      ridesCount,
+      totalRides,
+      completed:      d.completed,
+      userCancelled:  d.userCancelled,
+      userNoShow:     d.userNoShow,
       driverCancelled: d.driverCancelled,
+      driverRejected: d.driverRejected,
+      driverNoResponse: d.driverNoResponse,
       assignedShiftName: null,
       shiftStatus: null,
       alerts,
@@ -158,4 +153,8 @@ function buildReportFromCSV(driverMap, date, apiDrivers = []) {
   return results;
 }
 
-module.exports = { parseCSV, buildReportFromCSV };
+// Za kompatibilnost — stari CSV parser
+function parseCSV(csvText) { return {}; }
+function buildReportFromCSV(d, date) { return []; }
+
+module.exports = { parseRidesCSV, buildReportFromRidesCSV, parseCSV, buildReportFromCSV };
