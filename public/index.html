@@ -690,15 +690,17 @@
 
       const json = await res.json();
       allDrivers = json.data || [];
-      renderSummary(allDrivers);
-      renderDrivers(allDrivers);
-
-      const names = files.map(f => f.name).join(', ');
-      document.getElementById('fetch-time').textContent = `📄 CSV · ${json.date}`;
-      showToast(`✅ CSV učitan: ${allDrivers.length} vozača (${files.length} fajl${files.length > 1 ? 'a' : ''})`, 'success');
 
       // Ažuriraj datum u date pickeru
       if (json.date) document.getElementById('date-input').value = json.date;
+
+      // Prikaži summary i vozače
+      document.getElementById('summary-bar').style.display = 'none';
+      renderSummary(allDrivers);
+      renderDrivers(allDrivers);
+
+      document.getElementById('fetch-time').textContent = `📄 CSV · ${json.date}`;
+      showToast(`✅ CSV učitan: ${allDrivers.length} vozača`, 'success');
 
     } catch (err) {
       showError(err.message);
