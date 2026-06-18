@@ -339,7 +339,7 @@
   <div class="header-right">
     <input type="date" class="date-picker" id="date-input" />
     <button class="btn btn-outline" id="refresh-btn" onclick="loadReport(true)">↺ Osvježi</button>
-    <label class="btn btn-outline" style="cursor:pointer;" title="Učitaj Bolt CSV izvještaj">📄 CSV<input type="file" accept=".csv" id="csv-input" style="display:none" onchange="uploadCSV(this)"></label>
+    <label class="btn btn-outline" style="cursor:pointer;" title="Učitaj Bolt CSV izvještaj">📄 CSV<input type="file" accept=".csv" id="csv-input" style="display:none" multiple onchange="uploadCSV(this)"></label>
     <button class="btn btn-primary" id="mail-btn" onclick="sendReport()">📧 Pošalji mail</button>
   </div>
 </header>
@@ -659,8 +659,8 @@
 
   // ── CSV Upload ────────────────────────────────────────────────
   async function uploadCSV(input) {
-    const file = input.files[0];
-    if (!file) return;
+    const files = Array.from(input.files);
+    if (!files.length) return;
     const date = document.getElementById('date-input').value;
 
     showLoading(true);
@@ -668,14 +668,19 @@
     document.getElementById('summary-bar').style.display = 'none';
 
     try {
-      const csvText = await file.text();
+      // Čitaj sve fajlove
+      const csvFiles = await Promise.all(files.map(async f => ({
+        name: f.name,
+        content: await f.text(),
+      })));
+
       const headers = { 'Content-Type': 'application/json' };
       if (storedKey) headers['x-dashboard-key'] = storedKey;
 
       const res = await fetch('/api/upload-csv', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ csvText, date }),
+        body: JSON.stringify({ csvFiles, date }),
       });
 
       if (!res.ok) {
@@ -687,13 +692,19 @@
       allDrivers = json.data || [];
       renderSummary(allDrivers);
       renderDrivers(allDrivers);
-      document.getElementById('fetch-time').textContent = `📄 CSV · ${file.name}`;
-      showToast(`✅ CSV učitan: ${allDrivers.length} vozača`, 'success');
+
+      const names = files.map(f => f.name).join(', ');
+      document.getElementById('fetch-time').textContent = `📄 CSV · ${json.date}`;
+      showToast(`✅ CSV učitan: ${allDrivers.length} vozača (${files.length} fajl${files.length > 1 ? 'a' : ''})`, 'success');
+
+      // Ažuriraj datum u date pickeru
+      if (json.date) document.getElementById('date-input').value = json.date;
+
     } catch (err) {
       showError(err.message);
     } finally {
       showLoading(false);
-      input.value = ''; // reset input
+      input.value = '';
     }
   }
 
