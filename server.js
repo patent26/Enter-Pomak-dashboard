@@ -6,6 +6,7 @@ const cron    = require('node-cron');
 const dayjs   = require('dayjs');
 const { buildDailyReport } = require('./bolt-api');
 const { parseRidesCSV, parseActivityCSV, detectCSVType, buildCombinedReport } = require('./csv-parser');
+const { saveReport, loadReport } = require('./storage');
 const { sendDailyReport }  = require('./mailer');
 
 const app  = express();
@@ -38,6 +39,14 @@ app.get('/api/report', async (req, res) => {
     // Vrati cache ako je isti dan i mlađi od 30 min
     if (reportCache.date === date && reportCache.fetchedAt && (now - reportCache.fetchedAt) < 30 * 60 * 1000) {
       return res.json({ data: reportCache.data, date, cached: true, fetchedAt: reportCache.fetchedAt });
+    }
+
+    // Provjeri trajni storage (JSONBin)
+    const stored = await loadReport(date);
+    if (stored && stored.data) {
+      console.log(`💾 Učitan iz storage-a za ${date}`);
+      reportCache = { date, data: stored.data, fetchedAt: stored.savedAt || now };
+      return res.json({ data: stored.data, date, cached: true, fetchedAt: stored.savedAt || now, source: 'storage' });
     }
 
     console.log(`📊 Dohvaćam report za ${date}...`);
@@ -117,7 +126,11 @@ app.post('/api/upload-csv', async (req, res) => {
     reportCache = { date: targetDate, data, fetchedAt: Date.now() };
 
     console.log(`📄 CSV parsiran: ${data.length} vozača`);
-    res.json({ data, date: targetDate, cached: false, fetchedAt: Date.now() });
+    
+    // Spremi u trajni storage
+    await saveReport(targetDate, data);
+    
+    res.json({ data, date: targetDate, cached: false, fetchedAt: Date.now(), source: 'csv' });
   } catch (err) {
     console.error('CSV greška:', err.message);
     res.status(500).json({ error: err.message });
