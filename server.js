@@ -174,7 +174,9 @@ app.get('*', (req, res) => {
   res.sendFile(__dirname + '/public/index.html');
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Bolt Fleet Dashboard pokrenut na portu ${PORT}`);
   console.log(`📅 Cron izvještaj: svaki dan u 09:30 (Europe/Zagreb)`);
+  // Inicijaliziraj JSONBin storage pri startu
+  try { await loadReport('init'); } catch(e) {}
 });
