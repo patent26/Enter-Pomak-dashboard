@@ -190,14 +190,17 @@ function parseEarningsCSV(csvText) {
     const phone      = row[2]?.trim();
     if (!driverName) continue;
 
+    const onlineMin = pf(row[32]);
+    const activeMin = pf(row[33]);
     driverMap[driverName] = {
       name:          driverName,
       phone:         phone || '-',
       grossRevenue:  pf(row[3]),   // Bruto zarada ukupno
       netRevenue:    pf(row[17]),  // Neto zarada
       netHourly:     pf(row[20]),  // Neto zarada po satu
-      onlineMin:     pf(row[32]),  // Vrijeme na mreži (min)
-      activeMin:     pf(row[33]),  // Aktivno vrijeme na mreži (min)
+      onlineMin,                   // Vrijeme na mreži (min)
+      activeMin,                   // Aktivno = u vožnji (min)
+      waitingMin:    onlineMin - activeMin,  // Čekanje (min)
       utilisation:   pf(row[34]),  // Učinkovitost %
       ridesCount:    parseInt(row[29]) || 0,  // Završene vožnje
       acceptRate:    pf(row[30]),  // Ukupna stopa prihvaćanja %
@@ -275,6 +278,7 @@ function buildCombinedReport(ridesData, activityData, date, performanceData = nu
       netHourly:        Math.round(netHourly     * 100) / 100,
       onlineHours:      Math.round(onlineHours   * 10)  / 10,
       drivingHours:     Math.round(drivingHours  * 10)  / 10,
+      waitingHours:     Math.round(((e.waitingMin || 0) / 60) * 10) / 10,
       kmDriven:         Math.round(kmDriven      * 10)  / 10,
       acceptRate:       Math.round(acceptRate    * 10)  / 10,
       utilisation:      Math.round(utilisation   * 10)  / 10,
