@@ -1,11 +1,10 @@
 // mailer.js — Brevo (Sendinblue) SMTP
-const nodemailer = require('nodemailer');
 
 function createTransport() {
   return nodemailer.createTransport({
     host: 'smtp-relay.brevo.com',
-    port: 587,
-    secure: false,
+    port: 465,
+    secure: true,
     auth: {
       user: process.env.BREVO_LOGIN,
       pass: process.env.BREVO_SMTP_KEY,
@@ -100,7 +99,6 @@ function buildEmailHTML(drivers, date) {
 }
 
 async function sendDailyReport(drivers, date) {
-  const transporter = createTransport();
   const recipients = process.env.REPORT_RECIPIENTS || 'patricia.enterpomak@gmail.com,info.enterpomak@gmail.com,vidovic.perica84@gmail.com';
 
   const totalAlerts = drivers.reduce((s, d) => s + (d.alerts?.length || 0), 0);
@@ -114,13 +112,7 @@ async function sendDailyReport(drivers, date) {
     ? `⚠️ Bolt Fleet ${shortDate} — ${totalAlerts} alarm${totalAlerts === 1 ? '' : 'a'} | Neto: ${totalRevenue.toFixed(2)} €`
     : `✅ Bolt Fleet ${shortDate} — Sve u redu | Neto: ${totalRevenue.toFixed(2)} €`;
 
-  await transporter.sendMail({
-    from: `"Bolt Fleet Dashboard" <${process.env.GMAIL_USER}>`,
-    to: recipients,
-    subject,
-    html: buildEmailHTML(drivers, date),
-  });
-
+  await sendViaBrevoAPI(recipients, subject, buildEmailHTML(drivers, date));
   console.log(`📧 Mail poslan na: ${recipients}`);
 }
 
