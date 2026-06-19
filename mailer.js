@@ -1,43 +1,15 @@
-// mailer.js — Resend email service
-const https = require('https');
+// mailer.js — Brevo (Sendinblue) SMTP
+const nodemailer = require('nodemailer');
 
-function sendViaResend(to, subject, html) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify({
-      from: 'Bolt Fleet Dashboard <onboarding@resend.dev>',
-      to: Array.isArray(to) ? to : [to],
-      subject,
-      html,
-    });
-
-    const options = {
-      hostname: 'api.resend.com',
-      port: 443,
-      path: '/emails',
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data),
-      },
-    };
-
-    const req = https.request(options, (res) => {
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
-        const parsed = JSON.parse(body);
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(parsed);
-        } else {
-          reject(new Error(`Resend greška ${res.statusCode}: ${body}`));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.write(data);
-    req.end();
+function createTransport() {
+  return nodemailer.createTransport({
+    host: 'smtp-relay.brevo.com',
+    port: 587,
+    secure: false,
+    auth: {
+      user: process.env.BREVO_LOGIN,
+      pass: process.env.BREVO_SMTP_KEY,
+    },
   });
 }
 
@@ -66,7 +38,11 @@ function buildEmailHTML(drivers, date) {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
   });
 
-  const colors = { danger: { bg: '#FEE2E2', color: '#991B1B', icon: '🔴' }, warning: { bg: '#FEF3C7', color: '#92400E', icon: '🟡' }, info: { bg: '#DBEAFE', color: '#1E40AF', icon: '🔵' } };
+  const colors = {
+    danger:  { bg: '#FEE2E2', color: '#991B1B', icon: '🔴' },
+    warning: { bg: '#FEF3C7', color: '#92400E', icon: '🟡' },
+    info:    { bg: '#DBEAFE', color: '#1E40AF', icon: '🔵' }
+  };
 
   const driversRows = drivers.map(d => {
     if (d.error) return `<tr><td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;font-weight:600;">${d.name}</td><td colspan="8" style="padding:12px 14px;border-bottom:1px solid #E5E7EB;color:#9CA3AF;font-style:italic;">Podaci nisu dostupni</td></tr>`;
@@ -124,7 +100,9 @@ function buildEmailHTML(drivers, date) {
 }
 
 async function sendDailyReport(drivers, date) {
-  const recipients = (process.env.REPORT_RECIPIENTS || 'patricia.enterpomak@gmail.com,info.enterpomak@gmail.com,vidovic.perica84@gmail.com').split(',').map(e => e.trim());
+  const transporter = createTransport();
+  const recipients = process.env.REPORT_RECIPIENTS || 'patricia.enterpomak@gmail.com,info.enterpomak@gmail.com,vidovic.perica84@gmail.com';
+
   const totalAlerts = drivers.reduce((s, d) => s + (d.alerts?.length || 0), 0);
   const active = drivers.filter(d => !d.error && (d.onlineHours > 0 || d.ridesCount > 0));
   const totalRevenue = active.reduce((s, d) => s + (d.netRevenue || 0), 0);
@@ -136,18 +114,14 @@ async function sendDailyReport(drivers, date) {
     ? `⚠️ Bolt Fleet ${shortDate} — ${totalAlerts} alarm${totalAlerts === 1 ? '' : 'a'} | Neto: ${totalRevenue.toFixed(2)} €`
     : `✅ Bolt Fleet ${shortDate} — Sve u redu | Neto: ${totalRevenue.toFixed(2)} €`;
 
-  const html = buildEmailHTML(drivers, date);
+  await transporter.sendMail({
+    from: `"Bolt Fleet Dashboard" <${process.env.GMAIL_USER}>`,
+    to: recipients,
+    subject,
+    html: buildEmailHTML(drivers, date),
+  });
 
-  // Resend besplatni plan — šalje jedan po jedan
-  for (const recipient of recipients) {
-    try {
-      await sendViaResend([recipient], subject, html);
-      console.log(`📧 Mail poslan na: ${recipient}`);
-    } catch (err) {
-      console.error(`📧 Greška za ${recipient}:`, err.message);
-    }
-  }
+  console.log(`📧 Mail poslan na: ${recipients}`);
 }
-
 
 module.exports = { sendDailyReport };
