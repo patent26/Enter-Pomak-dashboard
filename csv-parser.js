@@ -21,12 +21,14 @@ function pf(val) {
 // Prepoznaj tip CSV-a po zaglavlju
 function detectCSVType(csvText) {
   const first = csvText.split('\n')[0].toLowerCase();
-  if (first.includes('ukupna stopa prihva') || first.includes('u\u010dinkovitost') || first.includes('zavr\u0161ene vožnje') && first.includes('u\u010dinak')) return 'performance';
-  if (first.includes('u\u010dinak') || first.includes('u\u010dinkovitost|%') || first.includes('efektivna')) return 'performance';
-  if (first.includes('status') && first.includes('udaljenost') || first.includes('ruta')) return 'rides';
-  if (first.includes('aktivno') || first.includes('smjena') || first.includes('shift')) return 'activity';
-  // Provjeri po stupcima — performance ima "Učinkovitost"
-  if (first.includes('prihva') && first.includes('min') && first.includes('km')) return 'performance';
+  // Zarada CSV ima "neto zarada" i "provizija"
+  if (first.includes('neto zarada') || first.includes('provizija') || first.includes('bruto zarada')) return 'earnings';
+  // Performance CSV
+  if (first.includes('efektivna') && first.includes('uspje')) return 'performance';
+  // Rides CSV
+  if (first.includes('ruta') || (first.includes('status') && first.includes('udaljenost'))) return 'rides';
+  // Activity CSV
+  if (first.includes('smjena') || first.includes('shift')) return 'activity';
   return 'rides';
 }
 
@@ -163,8 +165,52 @@ function parsePerformanceCSV(csvText) {
   return { driverMap, csvDate: null };
 }
 
+
+// Parser: "Zarada po vozaču" CSV — ima SVE direktno iz Bolta
+// Stupci: Vozač, Email, Telefon, Bruto(ukupno), Bruto(app), Bruto(gotovina),
+//         Prikupljena gotovina, Napojnice, Promocije, Povrat, Otkazne, Cestarina,
+//         Naknade rezerv., Ukupne naknade, Provizija, Povrati, Ostale naknade,
+//         Neto zarada, Procijenjena isplata, Bruto/sat, Neto/sat,
+//         Popust(app), Popust(gotovina), ID vozača, UUID, Razina, Kategorije,
+//         Gotovina, Uspješnost, Završene vožnje, Ukupna prihvaćenost,
+//         Efektivna prihvaćenost, Vrijeme na mreži(min), Aktivno(min),
+//         Učinkovitost, Stopa završenih(sve), Stopa završenih(prihvaćene),
+//         Prosj.km, Ukupno km, Ocjena
+function parseEarningsCSV(csvText) {
+  const lines = csvText.split('\n').filter(l => l.trim());
+  if (lines.length < 2) throw new Error('Earnings CSV je prazan');
+
+  const driverMap = {};
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = parseCSVLine(lines[i]);
+    if (row.length < 20) continue;
+
+    const driverName = row[0]?.trim();
+    const phone      = row[2]?.trim();
+    if (!driverName) continue;
+
+    driverMap[driverName] = {
+      name:          driverName,
+      phone:         phone || '-',
+      grossRevenue:  pf(row[3]),   // Bruto zarada ukupno
+      netRevenue:    pf(row[17]),  // Neto zarada
+      netHourly:     pf(row[20]),  // Neto zarada po satu
+      onlineMin:     pf(row[32]),  // Vrijeme na mreži (min)
+      activeMin:     pf(row[33]),  // Aktivno vrijeme na mreži (min)
+      utilisation:   pf(row[34]),  // Učinkovitost %
+      ridesCount:    parseInt(row[29]) || 0,  // Završene vožnje
+      acceptRate:    pf(row[30]),  // Ukupna stopa prihvaćanja %
+      effectiveAcc:  pf(row[31]),  // Efektivna stopa prihvaćanja %
+      totalKm:       pf(row[38]),  // Ukupna udaljenost vožnje
+    };
+  }
+
+  return { driverMap, csvDate: null };
+}
+
 // Kombinirani report iz oba CSV-a
-function buildCombinedReport(ridesData, activityData, date, performanceData = null) {
+function buildCombinedReport(ridesData, activityData, date, performanceData = null, earningsData = null) {
   const BOLT_COMMISSION = parseFloat(process.env.BOLT_COMMISSION || 0.27);
   const MIN_HOURLY    = parseFloat(process.env.ALERT_MIN_NET_HOURLY   || 15);
   const MIN_REVENUE   = parseFloat(process.env.ALERT_MIN_NET_REVENUE  || 180);
@@ -177,6 +223,7 @@ function buildCombinedReport(ridesData, activityData, date, performanceData = nu
     ...Object.keys(ridesData      || {}),
     ...Object.keys(activityData   || {}),
     ...Object.keys(performanceData || {}),
+    ...Object.keys(earningsData   || {}),
   ]);
 
   const results = [];
@@ -185,30 +232,27 @@ function buildCombinedReport(ridesData, activityData, date, performanceData = nu
     const r = ridesData?.[name]      || {};
     const a = activityData?.[name]   || {};
     const p = performanceData?.[name] || {};
+    const e = earningsData?.[name]   || {};
 
-    const grossRevenue = r.grossRevenue || 0;
-    const netRevenue   = grossRevenue * (1 - BOLT_COMMISSION);
+    // EARNINGS CSV ima prioritet — direktno Boltovi podaci
+    const netRevenue   = e.netRevenue   || r.grossRevenue * (1 - BOLT_COMMISSION) || 0;
+    const grossRevenue = e.grossRevenue || r.grossRevenue || 0;
+    const kmDriven     = e.totalKm      || p.totalKm || r.totalKm || 0;
 
-    // Km — performance CSV je najtočniji
-    const kmDriven = p.totalKm || r.totalKm || 0;
+    // Sati — earnings > performance > activity > rides
+    const onlineHours  = e.onlineMin  ? e.onlineMin / 60  : (p.onlineMin  ? p.onlineMin / 60  : (a.onlineMin  ? a.onlineMin / 60  : (r.drivingMin || 0) / 60 * 1.05));
+    const drivingHours = e.activeMin  ? e.activeMin / 60  : (p.activeMin  ? p.activeMin / 60  : (a.activeMin  ? a.activeMin / 60  : (r.drivingMin || 0) / 60));
 
-    // Sati — performance CSV je najtočniji (direktno od Bolta)
-    const onlineHours  = p.onlineMin  ? p.onlineMin / 60  : (a.onlineMin  ? a.onlineMin / 60  : (r.drivingMin || 0) / 60 * 1.05);
-    const drivingHours = p.activeMin  ? p.activeMin / 60  : (a.activeMin  ? a.activeMin / 60  : (r.drivingMin || 0) / 60);
-
-    const netHourly   = onlineHours > 0 ? netRevenue / onlineHours : 0;
-    // Utilisation — direktno iz Bolta ako imamo performance CSV
-    const utilisation = p.utilisation || (onlineHours > 0 ? (drivingHours / onlineHours) * 100 : 0);
-
-    // Acceptance rate — direktno iz Bolta (najtočnije!)
-    const acceptRate = p.acceptRate !== undefined ? p.acceptRate :
+    // Neto/sat — direktno iz earnings CSV
+    const netHourly   = e.netHourly || (onlineHours > 0 ? netRevenue / onlineHours : 0);
+    const utilisation = e.utilisation || p.utilisation || (onlineHours > 0 ? (drivingHours / onlineHours) * 100 : 0);
+    const acceptRate  = e.acceptRate !== undefined ? e.acceptRate : (p.acceptRate !== undefined ? p.acceptRate :
                        (() => {
                          const completed  = r.completed || 0;
                          const driverFail = (r.driverNoResponse || 0) + (r.driverCancelled || 0);
                          return (completed + driverFail) > 0 ? (completed / (completed + driverFail)) * 100 : 100;
-                       })();
-
-    const ridesCount = p.ridesCount || r.completed || 0;
+                       })());
+    const ridesCount = e.ridesCount || p.ridesCount || r.completed || 0;
     const wasActive  = ridesCount > 0 || onlineHours > 0;
 
     const alerts = [];
@@ -250,4 +294,4 @@ function buildCombinedReport(ridesData, activityData, date, performanceData = nu
   return results;
 }
 
-module.exports = { parseRidesCSV, parseActivityCSV, parsePerformanceCSV, detectCSVType, buildCombinedReport };
+module.exports = { parseRidesCSV, parseActivityCSV, parsePerformanceCSV, parseEarningsCSV, detectCSVType, buildCombinedReport };
