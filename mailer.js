@@ -1,14 +1,38 @@
-// mailer.js — Brevo (Sendinblue) SMTP
+// mailer.js — Brevo HTTP API
+const https = require('https');
 
-function createTransport() {
-  return nodemailer.createTransport({
-    host: 'smtp-relay.brevo.com',
-    port: 465,
-    secure: true,
-    auth: {
-      user: process.env.BREVO_LOGIN,
-      pass: process.env.BREVO_SMTP_KEY,
-    },
+async function sendViaBrevoAPI(to, subject, html) {
+  const recipients = Array.isArray(to) ? to : to.split(',').map(e => e.trim());
+  const body = JSON.stringify({
+    sender: { name: 'Bolt Fleet Dashboard', email: process.env.GMAIL_USER },
+    to: recipients.map(email => ({ email: email.trim() })),
+    subject,
+    htmlContent: html,
+  });
+
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.brevo.com',
+      port: 443,
+      path: '/v3/smtp/email',
+      method: 'POST',
+      headers: {
+        'api-key': process.env.BREVO_API_KEY,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        console.log(`📧 Brevo odgovor [${res.statusCode}]:`, data);
+        if (res.statusCode >= 200 && res.statusCode < 300) resolve(JSON.parse(data));
+        else reject(new Error(`Brevo greška ${res.statusCode}: ${data}`));
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
   });
 }
 
@@ -44,8 +68,7 @@ function buildEmailHTML(drivers, date) {
   };
 
   const driversRows = drivers.map(d => {
-    if (d.error) return `<tr><td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;font-weight:600;">${d.name}</td><td colspan="8" style="padding:12px 14px;border-bottom:1px solid #E5E7EB;color:#9CA3AF;font-style:italic;">Podaci nisu dostupni</td></tr>`;
-
+    if (d.error) return `<tr><td colspan="9" style="padding:12px 14px;">${d.name} — podaci nisu dostupni</td></tr>`;
     const alertCodes = new Set((d.alerts || []).map(a => a.code));
     const rowBg = d.hasAlerts ? 'background:#FFFBEB;' : '';
     const alertsHTML = d.alerts?.length
@@ -54,12 +77,12 @@ function buildEmailHTML(drivers, date) {
 
     return `<tr style="${rowBg}">
       <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;"><div style="font-weight:700;">${d.name}</div><div style="font-size:12px;color:#6B7280;">${d.phone}</div></td>
-      <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;color:${alertCodes.has('low_revenue') ? '#D97706' : '#111827'};font-weight:${alertCodes.has('low_revenue') ? 700 : 500};">${eur(d.netRevenue)}</td>
-      <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;color:${alertCodes.has('low_hourly') ? '#DC2626' : '#111827'};font-weight:${alertCodes.has('low_hourly') ? 700 : 500};">${eur(d.netHourly)}/h</td>
+      <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;color:${alertCodes.has('low_revenue')?'#D97706':'#111827'};font-weight:${alertCodes.has('low_revenue')?700:500};">${eur(d.netRevenue)}</td>
+      <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;color:${alertCodes.has('low_hourly')?'#DC2626':'#111827'};font-weight:${alertCodes.has('low_hourly')?700:500};">${eur(d.netHourly)}/h</td>
       <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;">${hrs(d.onlineHours)}</td>
-      <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;color:${alertCodes.has('low_drive_hrs') ? '#D97706' : '#111827'};font-weight:${alertCodes.has('low_drive_hrs') ? 700 : 500};">${hrs(d.drivingHours)}</td>
-      <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;color:${alertCodes.has('low_km') || alertCodes.has('high_km') ? '#D97706' : '#111827'};font-weight:${alertCodes.has('low_km') || alertCodes.has('high_km') ? 700 : 500};">${km(d.kmDriven)}</td>
-      <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;color:${alertCodes.has('low_accept') ? '#DC2626' : '#111827'};font-weight:${alertCodes.has('low_accept') ? 700 : 500};">${pct(d.acceptRate)}</td>
+      <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;color:${alertCodes.has('low_drive_hrs')?'#D97706':'#111827'};font-weight:${alertCodes.has('low_drive_hrs')?700:500};">${hrs(d.drivingHours)}</td>
+      <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;color:${alertCodes.has('low_km')||alertCodes.has('high_km')?'#D97706':'#111827'};font-weight:${alertCodes.has('low_km')||alertCodes.has('high_km')?700:500};">${km(d.kmDriven)}</td>
+      <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;color:${alertCodes.has('low_accept')?'#DC2626':'#111827'};font-weight:${alertCodes.has('low_accept')?700:500};">${pct(d.acceptRate)}</td>
       <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;text-align:right;">${pct(d.utilisation)}</td>
       <td style="padding:12px 14px;border-bottom:1px solid #E5E7EB;min-width:200px;">${alertsHTML}</td>
     </tr>`;
@@ -72,7 +95,7 @@ function buildEmailHTML(drivers, date) {
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
       <div><div style="font-size:22px;font-weight:800;color:white;">⚡ Bolt Fleet — Dnevni izvještaj</div>
       <div style="color:#9CA3AF;margin-top:6px;">${dateCroatian}</div></div>
-      ${totalAlerts > 0 ? `<div style="background:#DC2626;color:white;padding:8px 18px;border-radius:20px;font-weight:700;">⚠️ ${totalAlerts} alarm${totalAlerts === 1 ? '' : 'a'} · ${driversAlerts} vozač${driversAlerts === 1 ? '' : 'a'}</div>` : `<div style="background:#059669;color:white;padding:8px 18px;border-radius:20px;font-weight:700;">✓ Sve u redu</div>`}
+      ${totalAlerts > 0 ? `<div style="background:#DC2626;color:white;padding:8px 18px;border-radius:20px;font-weight:700;">⚠️ ${totalAlerts} alarma · ${driversAlerts} vozača</div>` : `<div style="background:#059669;color:white;padding:8px 18px;border-radius:20px;font-weight:700;">✓ Sve u redu</div>`}
     </div>
   </div>
   <div style="background:#34D399;padding:18px 32px;display:flex;gap:28px;flex-wrap:wrap;">
@@ -100,16 +123,13 @@ function buildEmailHTML(drivers, date) {
 
 async function sendDailyReport(drivers, date) {
   const recipients = process.env.REPORT_RECIPIENTS || 'patricia.enterpomak@gmail.com,info.enterpomak@gmail.com,vidovic.perica84@gmail.com';
-
   const totalAlerts = drivers.reduce((s, d) => s + (d.alerts?.length || 0), 0);
   const active = drivers.filter(d => !d.error && (d.onlineHours > 0 || d.ridesCount > 0));
   const totalRevenue = active.reduce((s, d) => s + (d.netRevenue || 0), 0);
-
   const dateObj = new Date(date + 'T12:00:00');
   const shortDate = dateObj.toLocaleDateString('hr-HR', { day: 'numeric', month: 'numeric', year: 'numeric' });
-
   const subject = totalAlerts > 0
-    ? `⚠️ Bolt Fleet ${shortDate} — ${totalAlerts} alarm${totalAlerts === 1 ? '' : 'a'} | Neto: ${totalRevenue.toFixed(2)} €`
+    ? `⚠️ Bolt Fleet ${shortDate} — ${totalAlerts} alarma | Neto: ${totalRevenue.toFixed(2)} €`
     : `✅ Bolt Fleet ${shortDate} — Sve u redu | Neto: ${totalRevenue.toFixed(2)} €`;
 
   await sendViaBrevoAPI(recipients, subject, buildEmailHTML(drivers, date));
