@@ -2,13 +2,18 @@
 const https = require('https');
 
 const API_KEY = process.env.JSONBIN_API_KEY;
-const BASE_URL = 'api.jsonbin.io';
+
+// Jedan glavni bin koji sadrži sve reporte po datumu
+// Format: { "2026-06-16": { date, data, savedAt }, ... }
+let MASTER_BIN_ID = process.env.JSONBIN_MASTER_BIN || null;
+let masterCache = null;
+let masterCacheTime = 0;
 
 function request(method, path, data = null) {
   return new Promise((resolve, reject) => {
     const body = data ? JSON.stringify(data) : null;
     const options = {
-      hostname: BASE_URL,
+      hostname: 'api.jsonbin.io',
       port: 443,
       path,
       method,
@@ -24,7 +29,7 @@ function request(method, path, data = null) {
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
         try { resolve(JSON.parse(body)); }
-        catch(e) { resolve(body); }
+        catch(e) { resolve({ error: body }); }
       });
     });
     req.on('error', reject);
@@ -33,29 +38,49 @@ function request(method, path, data = null) {
   });
 }
 
+// Dohvati master bin (s cacheom od 5 min)
+async function getMaster() {
+  if (masterCache && Date.now() - masterCacheTime < 5 * 60 * 1000) {
+    return masterCache;
+  }
+
+  if (!MASTER_BIN_ID) {
+    // Kreiraj novi master bin
+    console.log('💾 Kreiram novi master bin...');
+    const res = await request('POST', '/v3/b', {});
+    MASTER_BIN_ID = res.metadata?.id;
+    if (MASTER_BIN_ID) {
+      console.log(`💾 Master bin kreiran: ${MASTER_BIN_ID}`);
+      console.log(`💾 DODAJ U RENDER ENV: JSONBIN_MASTER_BIN=${MASTER_BIN_ID}`);
+      process.env.JSONBIN_MASTER_BIN = MASTER_BIN_ID;
+    }
+    masterCache = {};
+    masterCacheTime = Date.now();
+    return masterCache;
+  }
+
+  try {
+    const res = await request('GET', `/v3/b/${MASTER_BIN_ID}/latest`);
+    masterCache = res.record || {};
+    masterCacheTime = Date.now();
+    return masterCache;
+  } catch (err) {
+    console.error('💾 Greška pri čitanju master bina:', err.message);
+    return masterCache || {};
+  }
+}
+
 // Spremi report za datum
 async function saveReport(date, data) {
   try {
-    // Provjeri postoji li već bin za ovaj datum
-    const binId = process.env[`JSONBIN_BIN_${date.replace(/-/g, '_')}`];
-    
-    if (binId) {
-      // Ažuriraj postojeći
-      await request('PUT', `/v3/b/${binId}`, { date, data, savedAt: Date.now() });
-      console.log(`💾 Report ažuriran za ${date} (bin: ${binId})`);
-    } else {
-      // Kreiraj novi bin
-      const res = await request('POST', '/v3/b', { date, data, savedAt: Date.now() });
-      const newBinId = res.metadata?.id;
-      if (newBinId) {
-        console.log(`💾 Report spremljen za ${date} (novi bin: ${newBinId})`);
-        // Spremi bin ID u memoriju za ovaj session
-        process.env[`JSONBIN_BIN_${date.replace(/-/g, '_')}`] = newBinId;
-        
-        // Ažuriraj index bin
-        await updateIndex(date, newBinId);
-      }
-    }
+    if (!API_KEY) { console.log('💾 Nema JSONBIN_API_KEY, preskačem'); return false; }
+
+    const master = await getMaster();
+    master[date] = { date, data, savedAt: Date.now() };
+    masterCache = master;
+
+    await request('PUT', `/v3/b/${MASTER_BIN_ID}`, master);
+    console.log(`💾 Report spremljen za ${date}`);
     return true;
   } catch (err) {
     console.error('💾 Greška pri spremanju:', err.message);
@@ -66,50 +91,18 @@ async function saveReport(date, data) {
 // Dohvati report za datum
 async function loadReport(date) {
   try {
-    const binId = process.env[`JSONBIN_BIN_${date.replace(/-/g, '_')}`];
-    if (!binId) {
-      // Pokušaj naći u indexu
-      const indexBinId = process.env.JSONBIN_INDEX_BIN;
-      if (!indexBinId) return null;
-      
-      const index = await request('GET', `/v3/b/${indexBinId}/latest`);
-      const dateEntry = index.record?.[date];
-      if (!dateEntry) return null;
-      
-      process.env[`JSONBIN_BIN_${date.replace(/-/g, '_')}`] = dateEntry;
-      return await loadByBinId(dateEntry);
+    if (!API_KEY) return null;
+
+    const master = await getMaster();
+    const entry = master[date];
+    if (entry) {
+      console.log(`💾 Učitan iz JSONBin za ${date}`);
+      return entry;
     }
-    return await loadByBinId(binId);
+    return null;
   } catch (err) {
     console.error('💾 Greška pri učitavanju:', err.message);
     return null;
-  }
-}
-
-async function loadByBinId(binId) {
-  const res = await request('GET', `/v3/b/${binId}/latest`);
-  return res.record || null;
-}
-
-// Index bin — čuva mapu datum → bin ID
-async function updateIndex(date, binId) {
-  try {
-    let indexBinId = process.env.JSONBIN_INDEX_BIN;
-    
-    if (!indexBinId) {
-      // Kreiraj index bin
-      const res = await request('POST', '/v3/b', { [date]: binId });
-      indexBinId = res.metadata?.id;
-      process.env.JSONBIN_INDEX_BIN = indexBinId;
-      console.log(`💾 Index bin kreiran: ${indexBinId}`);
-    } else {
-      // Dohvati postojeći index i dodaj novi datum
-      const existing = await request('GET', `/v3/b/${indexBinId}/latest`);
-      const updated = { ...(existing.record || {}), [date]: binId };
-      await request('PUT', `/v3/b/${indexBinId}`, updated);
-    }
-  } catch (err) {
-    console.error('💾 Index greška:', err.message);
   }
 }
 
