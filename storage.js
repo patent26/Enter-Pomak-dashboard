@@ -49,15 +49,18 @@ async function readMaster() {
 }
 
 async function writeMaster(data) {
-  if (!API_KEY || !MASTER_BIN_ID) return false;
+  if (!API_KEY) { console.error('💾 Nema API_KEY!'); return false; }
+  if (!MASTER_BIN_ID) { console.error('💾 Nema MASTER_BIN_ID!'); return false; }
+  console.log(`💾 Pisanje u bin ${MASTER_BIN_ID}, datumi: ${Object.keys(data).filter(k=>k.match(/\d{4}/)).join(',')}`);
   try {
     const r = await request('PUT', `/v3/b/${MASTER_BIN_ID}`, data);
+    console.log(`💾 Write odgovor: status=${r.status} body=${JSON.stringify(r.data).substring(0,100)}`);
     if (r.status === 200) {
       localCache = data;
       localCacheTime = Date.now();
       return true;
     }
-    console.error('💾 Write greška status:', r.status, JSON.stringify(r.data));
+    console.error('💾 Write greška status:', r.status);
   } catch(e) { console.error('💾 Write greška:', e.message); }
   return false;
 }
