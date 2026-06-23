@@ -1,35 +1,30 @@
 // storage.js — JSONBin.io persistent storage
+// Sve se sprema direktno u jedan master bin
 const https = require('https');
 
 const API_KEY = process.env.JSONBIN_API_KEY;
+const MASTER_BIN_ID = process.env.JSONBIN_MASTER_BIN;
 
-// Jedan glavni bin koji sadrži sve reporte po datumu
-// Format: { "2026-06-16": { date, data, savedAt }, ... }
-let MASTER_BIN_ID = process.env.JSONBIN_MASTER_BIN || null;
-let masterCache = null;
-let masterCacheTime = 0;
+let localCache = null;
+let localCacheTime = 0;
 
-function request(method, path, data = null) {
+function request(method, path, data) {
   return new Promise((resolve, reject) => {
     const body = data ? JSON.stringify(data) : null;
     const options = {
-      hostname: 'api.jsonbin.io',
-      port: 443,
-      path,
-      method,
+      hostname: 'api.jsonbin.io', port: 443, path, method,
       headers: {
         'X-Access-Key': API_KEY,
         'Content-Type': 'application/json',
         ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {}),
       },
     };
-
-    const req = https.request(options, (res) => {
-      let body = '';
-      res.on('data', chunk => body += chunk);
+    const req = https.request(options, res => {
+      let b = '';
+      res.on('data', c => b += c);
       res.on('end', () => {
-        try { resolve(JSON.parse(body)); }
-        catch(e) { resolve({ error: body }); }
+        try { resolve({ status: res.statusCode, data: JSON.parse(b) }); }
+        catch(e) { resolve({ status: res.statusCode, data: {} }); }
       });
     });
     req.on('error', reject);
@@ -38,70 +33,60 @@ function request(method, path, data = null) {
   });
 }
 
-// Dohvati master bin (s cacheom od 5 min)
-async function getMaster() {
-  if (masterCache && Date.now() - masterCacheTime < 5 * 60 * 1000) {
-    return masterCache;
-  }
-
-  if (!MASTER_BIN_ID) {
-    // Kreiraj novi master bin
-    console.log('💾 Kreiram novi master bin...');
-    const res = await request('POST', '/v3/b', {});
-    MASTER_BIN_ID = res.metadata?.id;
-    if (MASTER_BIN_ID) {
-      console.log(`💾 Master bin kreiran: ${MASTER_BIN_ID}`);
-      console.log(`💾 DODAJ U RENDER ENV: JSONBIN_MASTER_BIN=${MASTER_BIN_ID}`);
-      process.env.JSONBIN_MASTER_BIN = MASTER_BIN_ID;
-    }
-    masterCache = {};
-    masterCacheTime = Date.now();
-    return masterCache;
-  }
-
+async function readMaster() {
+  if (!API_KEY || !MASTER_BIN_ID) return {};
+  if (localCache && Date.now() - localCacheTime < 2 * 60 * 1000) return localCache;
   try {
-    const res = await request('GET', `/v3/b/${MASTER_BIN_ID}/latest`);
-    masterCache = res.record || {};
-    masterCacheTime = Date.now();
-    return masterCache;
-  } catch (err) {
-    console.error('💾 Greška pri čitanju master bina:', err.message);
-    return masterCache || {};
-  }
+    const r = await request('GET', `/v3/b/${MASTER_BIN_ID}/latest`);
+    if (r.status === 200) {
+      localCache = r.data.record || {};
+      localCacheTime = Date.now();
+      console.log(`💾 Master bin učitan, datumi: ${Object.keys(localCache).filter(k => k.match(/\d{4}-\d{2}-\d{2}/)).join(', ') || 'nema'}`);
+      return localCache;
+    }
+  } catch(e) { console.error('💾 Read greška:', e.message); }
+  return localCache || {};
 }
 
-// Spremi report za datum
-async function saveReport(date, data) {
+async function writeMaster(data) {
+  if (!API_KEY || !MASTER_BIN_ID) return false;
   try {
-    if (!API_KEY) { console.log('💾 Nema JSONBIN_API_KEY, preskačem'); return false; }
+    const r = await request('PUT', `/v3/b/${MASTER_BIN_ID}`, data);
+    if (r.status === 200) {
+      localCache = data;
+      localCacheTime = Date.now();
+      return true;
+    }
+    console.error('💾 Write greška status:', r.status, JSON.stringify(r.data));
+  } catch(e) { console.error('💾 Write greška:', e.message); }
+  return false;
+}
 
-    const master = await getMaster();
-    master[date] = { date, data, savedAt: Date.now() };
-    masterCache = master;
-
-    await request('PUT', `/v3/b/${MASTER_BIN_ID}`, master);
-    console.log(`💾 Report spremljen za ${date}`);
-    return true;
-  } catch (err) {
-    console.error('💾 Greška pri spremanju:', err.message);
+async function saveReport(date, reportData) {
+  try {
+    const master = await readMaster();
+    master[date] = { date, data: reportData, savedAt: Date.now() };
+    const ok = await writeMaster(master);
+    if (ok) console.log(`💾 Spremljeno u master bin za ${date}`);
+    return ok;
+  } catch(e) {
+    console.error('💾 saveReport greška:', e.message);
     return false;
   }
 }
 
-// Dohvati report za datum
 async function loadReport(date) {
+  if (date === '_init_') { await readMaster(); return null; }
   try {
-    if (!API_KEY) return null;
-
-    const master = await getMaster();
+    const master = await readMaster();
     const entry = master[date];
-    if (entry) {
-      console.log(`💾 Učitan iz JSONBin za ${date}`);
+    if (entry && entry.data) {
+      console.log(`💾 Učitan iz master bina za ${date}`);
       return entry;
     }
     return null;
-  } catch (err) {
-    console.error('💾 Greška pri učitavanju:', err.message);
+  } catch(e) {
+    console.error('💾 loadReport greška:', e.message);
     return null;
   }
 }
