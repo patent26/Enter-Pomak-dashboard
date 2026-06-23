@@ -94,6 +94,7 @@ app.post('/api/upload-csv', async (req, res) => {
     const { csvFiles, date } = req.body;
     if (!csvFiles || !csvFiles.length) return res.status(400).json({ error: 'Nema CSV podataka' });
 
+    console.log(`📄 Upload: ${csvFiles.length} fajlova, date param: ${date}`);
     const savedDates = [];
     let lastData = null;
     let lastDate = null;
