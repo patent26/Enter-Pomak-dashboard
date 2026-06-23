@@ -2,7 +2,8 @@
 // Sve se sprema direktno u jedan master bin
 const https = require('https');
 
-const API_KEY = process.env.JSONBIN_API_KEY;
+const API_KEY = process.env.JSONBIN_API_KEY;        // X-Access-Key (čitanje)
+const MASTER_KEY = process.env.JSONBIN_MASTER_KEY;  // X-Master-Key (pisanje)
 const MASTER_BIN_ID = process.env.JSONBIN_MASTER_BIN;
 
 let localCache = null;
@@ -14,6 +15,7 @@ function request(method, path, data) {
     const options = {
       hostname: 'api.jsonbin.io', port: 443, path, method,
       headers: {
+        'X-Master-Key': MASTER_KEY || API_KEY,
         'X-Access-Key': API_KEY,
         'Content-Type': 'application/json',
         ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {}),
