@@ -106,12 +106,19 @@ app.post('/api/upload-csv', async (req, res) => {
         let fileDate = date;
         let data = null;
 
-        // Izvuci datum iz naziva fajla (format: DD-lip-YYYY ili DD lip YYYY)
+        // Izvuci datum iz naziva fajla
         if (!fileDate) {
-          const m = file.name.match(/(\d{2})[-_\s]lip[-_\s](\d{4})/i);
-          if (m) fileDate = `${m[2]}-06-${m[1].padStart(2,'0')}`;
-          const m2 = file.name.match(/(\d{4})-(\d{2})-(\d{2})/);
-          if (m2) fileDate = `${m2[1]}-${m2[2]}-${m2[3]}`;
+          // Format: "18 lip 2026" ili "18-lip-2026" ili "18_lip_2026"
+          const months = { 'sij':'01','velj':'02','ožu':'03','tra':'04','svi':'05','lip':'06','srp':'07','kol':'08','ruj':'09','lis':'10','stu':'11','pro':'12' };
+          const mCro = file.name.match(/(\d{1,2})[\s_-](sij|velj|o[žz]u|tra|svi|lip|srp|kol|ruj|lis|stu|pro)[\s_-](\d{4})/i);
+          if (mCro) {
+            const month = months[mCro[2].toLowerCase().replace('ž','ž').substring(0,3)];
+            fileDate = `${mCro[3]}-${month}-${mCro[1].padStart(2,'0')}`;
+          }
+          if (!fileDate) {
+            const m2 = file.name.match(/(\d{4})-(\d{2})-(\d{2})/);
+            if (m2) fileDate = `${m2[1]}-${m2[2]}-${m2[3]}`;
+          }
         }
 
         if (type === 'earnings') {
