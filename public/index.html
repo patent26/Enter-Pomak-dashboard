@@ -680,7 +680,7 @@
       const res = await fetch('/api/upload-csv', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ csvFiles, date }),
+        body: JSON.stringify({ csvFiles, date: files.length > 1 ? null : date }),
       });
 
       if (!res.ok) {
